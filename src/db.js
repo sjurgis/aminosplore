@@ -5,7 +5,9 @@ import { FOOD_COLS } from './nutrients.js'
 
 /* global __DB_HASH__ */
 export const DB_HASH = __DB_HASH__
-export const DB_URL = new URL(`foods.sqlite3?v=${DB_HASH}`, document.baseURI).href
+// Raw SQLite file. The .zip extension only exists so GitHub Pages serves it without
+// on-the-fly gzip (it gzips application/octet-stream, which breaks byte ranges).
+export const DB_URL = new URL(`foods.sqlite3.zip?v=${DB_HASH}`, document.baseURI).href
 
 let workerP = null
 function worker() {

@@ -11,7 +11,12 @@ const page = await ctx.newPage()
 const errors = []
 page.on('pageerror', (e) => errors.push(String(e)))
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
-const ranges = []
+const ranges = [], badResp = []
+page.on('response', async (r) => {
+  if (!r.url().includes('foods.sqlite3') || r.request().method() !== 'GET') return
+  const h = await r.allHeaders()
+  if (r.status() !== 206 || h['content-encoding']) badResp.push(`${r.status()} ${h['content-encoding'] || ''} ${h['content-range'] || ''}`)
+})
 page.on('request', (r) => { if (r.url().includes('foods.sqlite3')) ranges.push(r.method() + ' ' + (r.headers()['range'] || 'no-range')) })
 
 await page.goto(base, { waitUntil: 'networkidle' })
@@ -97,6 +102,7 @@ assert(!overflow, 'no horizontal overflow on mobile')
 const st = await page.getByTestId('dbstats').textContent()
 log('db stats:', st.replace(/\s+/g, ' ').trim())
 log('sqlite requests (first page):', ranges.length, ranges.slice(0, 6).join('; '))
+assert(badResp.length === 0, 'all DB responses are 206 without Content-Encoding ' + badResp.join('; '))
 assert(ranges.every((r) => !r.startsWith('GET no-range')), 'no full-file GET of the DB')
 assert(errors.length === 0, 'no page errors ' + errors.join('\n'))
 await browser.close()

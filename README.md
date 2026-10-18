@@ -13,13 +13,15 @@ Live: https://sjurgis.github.io/aminosplore/
 
 ## How it works (no backend)
 
-The whole USDA dataset is a single SQLite file (`public/foods.sqlite3`, ~3.2 MB) served as a static file by GitHub Pages.
+The whole USDA dataset is a single SQLite file (`public/foods.sqlite3.zip`, ~3.2 MB) served as a static file by GitHub Pages.
 The browser opens it with [sql.js-httpvfs](https://github.com/phiresky/sql.js-httpvfs), which reads only the 4 KB pages
 a query touches using HTTP `Range` requests — a search or loading a shared link typically downloads a few tens of KB.
 
 - Search uses an FTS5 table that holds everything a result row needs, so no lookups into the main table.
-- The DB URL carries a content hash (`foods.sqlite3?v=<sha256>`), so a rebuilt DB is never mixed with cached pages of the old one.
-- The DB must be served **uncompressed with working Range requests**. GitHub Pages does this. A proxy that recompresses
+- The DB URL carries a content hash (`foods.sqlite3.zip?v=<sha256>`), so a rebuilt DB is never mixed with cached pages of the old one.
+- The DB must be served **uncompressed with working Range requests**. GitHub Pages gzips `application/octet-stream`
+  on the fly (ranges then point into the compressed stream), so the file is named `.zip` — it is a plain SQLite
+  database, the extension just makes Pages serve it raw (`application/x-zip-compressed`, no `Content-Encoding`). A proxy that recompresses
   the file (e.g. Cloudflare orange-cloud in front of Pages) breaks it — use DNS-only for a custom domain.
 
 ### URL format
@@ -48,7 +50,7 @@ A ready-made GitHub Actions workflow is in [`ci/deploy-pages.yml`](ci/deploy-pag
 ### Rebuilding the database
 
 ```sh
-python3 scripts/build_db.py   # downloads the USDA zips into .fdc-cache/ if needed, writes public/foods.sqlite3
+python3 scripts/build_db.py   # downloads the USDA zips into .fdc-cache/ if needed, writes public/foods.sqlite3.zip
 ```
 
 The Actions workflow can also rebuild it (`workflow_dispatch` → `rebuild_db`). Layout: `page_size=4096`,

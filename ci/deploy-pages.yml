@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       rebuild_db:
-        description: Rebuild public/foods.sqlite3 from the USDA FoodData Central downloads
+        description: Rebuild public/foods.sqlite3.zip from the USDA FoodData Central downloads
         type: boolean
         default: false
 
@@ -34,7 +34,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: Check DB is shipped
-        run: ls -l dist/foods.sqlite3
+        run: ls -l dist/foods.sqlite3.zip
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

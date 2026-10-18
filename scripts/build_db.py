@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Build public/foods.sqlite3 from USDA FoodData Central CSV downloads.
+"""Build public/foods.sqlite3.zip (a plain SQLite file, NOT a zip archive) from USDA FoodData Central CSV downloads.
 
 Sources (public domain, U.S. Department of Agriculture, Agricultural Research Service):
   * SR Legacy (April 2018)             FoodData_Central_sr_legacy_food_csv_2018-04.zip
   * Foundation Foods (April 2026)      FoodData_Central_foundation_food_csv_2026-04-30.zip
   https://fdc.nal.usda.gov/download-datasets
 
-Usage: python3 scripts/build_db.py [--src DIR] [--out public/foods.sqlite3]
+Usage: python3 scripts/build_db.py [--src DIR] [--out public/foods.sqlite3.zip]
+
+Why ".zip": GitHub Pages gzips application/octet-stream responses on the fly, which makes
+HTTP Range offsets refer to compressed bytes. Files with a .zip extension are served raw.
 Zips are downloaded into DIR (default .fdc-cache/) if not already present.
 
 The DB is laid out for sql.js-httpvfs (HTTP range requests): page_size 4096,
@@ -59,7 +62,7 @@ def table(d, fn):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default=".fdc-cache")
-    ap.add_argument("--out", default="public/foods.sqlite3")
+    ap.add_argument("--out", default="public/foods.sqlite3.zip")
     a = ap.parse_args()
 
     foods, cats, portions = {}, {}, []
