@@ -1,4 +1,4 @@
-// URL hash state: #f=<fdcId>:<grams>,<fdcId>:<grams>&r=<recipe name>&m=<mode>&w=<body kg>
+// URL hash state: #f=<fdcId>:<grams>,...&r=<recipe name>&c=<aa|macro|vit|min>&m=<mode>&w=<body kg>
 // Hash (not query) so GitHub Pages never sees it and links stay shareable.
 export function parseHash(hash = location.hash) {
   const p = new URLSearchParams(hash.replace(/^#/, ''))
@@ -14,18 +14,22 @@ export function parseHash(hash = location.hash) {
   return {
     items,
     recipe: p.get('r') || '',
-    mode: p.get('m') || 'amount',
+    chart: p.get('c') || 'aa',
+    mode: p.get('m') || '',
     weight: parseFloat(p.get('w')) || 70,
   }
 }
 
 const num = (g) => String(Math.round(g * 10) / 10)
 
-export function buildHash({ items, recipe, mode, weight }) {
+export const defaultMode = (chart) => (chart === 'aa' ? 'amount' : 'dv')
+
+export function buildHash({ items, recipe, chart = 'aa', mode, weight }) {
   const parts = []
   if (items.length) parts.push('f=' + items.map((i) => `${i.id}:${num(i.grams)}`).join(','))
   if (recipe) parts.push('r=' + encodeURIComponent(recipe).replace(/%20/g, '+'))
-  if (mode && mode !== 'amount') parts.push('m=' + mode)
+  if (chart && chart !== 'aa') parts.push('c=' + chart)
+  if (mode && mode !== defaultMode(chart)) parts.push('m=' + mode)
   if (weight && weight !== 70) parts.push('w=' + num(weight))
   return parts.length ? '#' + parts.join('&') : ''
 }

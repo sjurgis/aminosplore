@@ -11,6 +11,9 @@ const props = defineProps({
   unit: { type: String, default: '' },
   format: { type: Function, default: (v) => v.toFixed(1) },
   minMax: { type: Number, default: 0 },
+  cap: { type: Number, default: 0 }, // if set, radial scale never exceeds this; larger values are clipped and labelled
+  noData: { type: Array, default: () => [] }, // per axis: true = no food has data for it
+  partial: { type: Array, default: () => [] }, // per axis: number of foods missing data
 })
 
 const size = 420
@@ -35,11 +38,15 @@ const cumulative = computed(() => {
 })
 const total = computed(() => (cumulative.value.length ? cumulative.value.at(-1).outer : props.axes.map(() => 0)))
 
-const max = computed(() => niceMax(Math.max(props.minMax, ...total.value, ...props.refs.flatMap((r) => r.values), 0)))
+const max = computed(() => {
+  const m = niceMax(Math.max(props.minMax, ...total.value, ...props.refs.flatMap((r) => r.values), 0))
+  return props.cap ? Math.min(m, props.cap) : m
+})
+const limitR = computed(() => (props.cap ? 1.04 : 1.15))
 const n = computed(() => props.axes.length)
 const angle = (i) => (Math.PI * 2 * i) / n.value - Math.PI / 2
 const pt = (i, r) => [c + Math.cos(angle(i)) * r, c + Math.sin(angle(i)) * r]
-const scaled = (vals) => vals.map((v, i) => pt(i, (R * Math.min(v, max.value * 1.15)) / max.value))
+const scaled = (vals) => vals.map((v, i) => pt(i, (R * Math.min(v, max.value * limitR.value)) / max.value))
 const ring = (pts) => 'M' + pts.map((p) => p.map((x) => x.toFixed(2)).join(',')).join('L') + 'Z'
 
 const rings = computed(() => [0.25, 0.5, 0.75, 1].map((f) => ({
@@ -53,12 +60,17 @@ const bands = computed(() => props.layers.map((l, li) => {
   return { ...l, li, d: ring(scaled(outer)) + ring(scaled(inner)), outer, mid: scaled(outer) }
 }))
 const totalPts = computed(() => scaled(total.value))
+const clipped = computed(() => total.value.map((v, i) => ({ v, i })).filter((x) => x.v > max.value * limitR.value)
+  .map((x) => ({ ...x, pos: pt(x.i, R * limitR.value - 18) })))
 const refPolys = computed(() => props.refs.map((r) => ({ ...r, points: scaled(r.values).map((p) => p.join(',')).join(' ') })))
 
 const labels = computed(() => props.axes.map((a, i) => {
   const [x, y] = pt(i, R + 26)
   const cos = Math.cos(angle(i))
-  return { ...a, x, y, anchor: Math.abs(cos) < 0.2 ? 'middle' : cos > 0 ? 'start' : 'end' }
+  const nd = !!props.noData[i], part = !nd && props.partial[i] > 0
+  const text = a.short + (a.limit ? '†' : '') + (part ? '*' : '')
+  const title = a.label + (a.limit ? ' — Daily Value is an upper limit' : '') + (nd ? ' — no data' : part ? ` — ${props.partial[i]} food(s) have no data` : '')
+  return { ...a, x, y, nd, text, title, anchor: Math.abs(cos) < 0.2 ? 'middle' : cos > 0 ? 'start' : 'end' }
 }))
 const pct = (v, t) => (t > 0 ? ` (${((v / t) * 100).toFixed(0)}%)` : '')
 </script>
@@ -86,7 +98,7 @@ const pct = (v, t) => (t > 0 ? ` (${((v / t) * 100).toFixed(0)}%)` : '')
         @mouseenter="hover = b.li"
         @mouseleave="hover = null"
       >
-        <title>{{ b.name }}: {{ axes.map((a, i) => `${a.short} ${format(b.values[i])}${pct(b.values[i], total[i])}`).join(', ') }}</title>
+        <title>{{ b.name }}: {{ axes.map((a, i) => `${a.short} ${b.missing?.[i] ? 'no data' : format(b.values[i]) + pct(b.values[i], total[i])}`).join(', ') }}</title>
       </path>
       <polygon v-for="r in refPolys" :key="r.name" class="ref" :points="r.points" />
       <g class="total-line" v-if="layers.length">
@@ -95,9 +107,12 @@ const pct = (v, t) => (t > 0 ? ` (${((v / t) * 100).toFixed(0)}%)` : '')
           <title>{{ totalName }} — {{ axes[i].label }}: {{ format(total[i]) }} {{ unit }}</title>
         </circle>
       </g>
+      <g class="clip-labels">
+        <text v-for="c in clipped" :key="c.i" :x="c.pos[0]" :y="c.pos[1]" text-anchor="middle" dominant-baseline="middle">{{ format(c.v) }}↑</text>
+      </g>
       <g class="axis-labels">
-        <text v-for="l in labels" :key="l.key" :x="l.x" :y="l.y" :text-anchor="l.anchor" dominant-baseline="middle">
-          <title>{{ l.label }}</title>{{ l.short }}
+        <text v-for="l in labels" :key="l.key" :x="l.x" :y="l.y" :text-anchor="l.anchor" dominant-baseline="middle" :class="{ nodata: l.nd }">
+          <title>{{ l.title }}</title>{{ l.text }}<tspan v-if="l.nd" class="nd-tag" :x="l.x" dy="13">no data</tspan>
         </text>
       </g>
     </svg>

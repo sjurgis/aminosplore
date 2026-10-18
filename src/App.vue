@@ -2,8 +2,8 @@
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import RadarChart from './components/RadarChart.vue'
 import { search as dbSearch, getFoods, meta as dbMeta, stats as dbStats, DB_HASH } from './db.js'
-import { parseHash, buildHash } from './urlState.js'
-import { MACROS, MODES, PALETTE, WHO_AXES, axesFor, stackedContributions, sumItems, aminoScore, fmt, FOOD_COLS } from './nutrients.js'
+import { parseHash, buildHash, defaultMode } from './urlState.js'
+import { MACROS, FAT_DETAIL, CHARTS, DV_MODES, stackedDV, MODES, PALETTE, WHO_AXES, axesFor, stackedContributions, sumItems, aminoScore, fmt, FOOD_COLS } from './nutrients.js'
 
 /* global __DB_SIZE__ */
 const DB_SIZE = __DB_SIZE__
@@ -12,7 +12,12 @@ const DB_SIZE = __DB_SIZE__
 const init = parseHash()
 const items = ref(init.items) // [{ id, grams }]
 const recipe = ref(init.recipe)
-const mode = ref(MODES.some((m) => m.key === init.mode) ? init.mode : 'amount')
+const chartType = ref(CHARTS.some((c) => c.key === init.chart) ? init.chart : 'aa')
+const modesFor = (c) => (c === 'aa' ? MODES : DV_MODES)
+const resolveMode = (c, m) => (modesFor(c).some((x) => x.key === m) ? m : m === 'per100' ? 'per100' : defaultMode(c))
+const mode = ref(resolveMode(chartType.value, init.mode))
+const modes = computed(() => modesFor(chartType.value))
+watch(chartType, (c) => (mode.value = resolveMode(c, mode.value)))
 const weight = ref(init.weight)
 
 const foods = reactive({}) // id -> food row
@@ -38,7 +43,7 @@ async function refreshStats() {
 
 watch(items, loadFoods, { deep: true, immediate: true })
 
-const hash = computed(() => buildHash({ items: items.value, recipe: recipe.value.trim(), mode: mode.value, weight: weight.value }))
+const hash = computed(() => buildHash({ items: items.value, recipe: recipe.value.trim(), chart: chartType.value, mode: mode.value, weight: weight.value }))
 watch(hash, (h) => {
   if (h !== location.hash && !(h === '' && location.hash === '')) {
     history.replaceState(null, '', h || location.pathname + location.search)
@@ -48,7 +53,8 @@ function onHashChange() {
   const s = parseHash()
   items.value = s.items
   recipe.value = s.recipe
-  mode.value = s.mode
+  chartType.value = CHARTS.some((c) => c.key === s.chart) ? s.chart : 'aa'
+  mode.value = resolveMode(chartType.value, s.mode)
   weight.value = s.weight
 }
 
@@ -131,6 +137,27 @@ const chart = computed(() => {
     totalName: recipe.value.trim() || (mode.value === 'per100' || mode.value === 'protein' ? 'Whole meal' : 'Total'),
   }
 })
+const pctFmt = (v) => (v >= 10 ? v.toFixed(0) : v.toFixed(1))
+const amtFmt = (v) => (v >= 100 ? Math.round(v).toLocaleString() : v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v.toFixed(3))
+const dvChart = computed(() => {
+  const c = CHARTS.find((x) => x.key === chartType.value)
+  const list = loaded.value
+  const r = stackedDV(c.axes, list, mode.value)
+  return {
+    axes: c.axes,
+    layers: list.map((x, i) => ({ name: shortName(x.food.name), color: x.color, values: r.layers[i], missing: r.missing[i] })),
+    total: r.total, amount: r.amount, nMissing: r.nMissing, allMissing: r.allMissing,
+    refs: list.length && mode.value === 'dv' ? [{ name: '100% Daily Value', values: c.axes.map(() => 100) }] : [],
+    totalName: recipe.value.trim() || (mode.value === 'per100' ? 'Whole meal' : 'Total'),
+  }
+})
+const isAA = computed(() => chartType.value === 'aa')
+const view = computed(() => (isAA.value
+  ? { ...chart.value, axes: axes.value, unit: unit.value, fmt: chartFmt.value, minMax: mode.value === 'who' ? 100 : 0, cap: 0, noData: [], partial: [] }
+  : { ...dvChart.value, unit: mode.value === 'per100' ? '% Daily Value per 100 g of meal' : '% Daily Value', fmt: pctFmt, minMax: mode.value === 'dv' ? 100 : 0, cap: 300, noData: dvChart.value.allMissing, partial: dvChart.value.nMissing }))
+const hasLimit = computed(() => !isAA.value && view.value.axes.some((a) => a.limit))
+const axisNotes = computed(() => (isAA.value ? [] : view.value.axes.filter((a) => a.note)))
+
 const scores = computed(() => {
   const s = withAA.value.map((r) => ({ name: r.food.name, color: r.color, ...aminoScore(r.food) }))
   if (withAA.value.length > 1) s.push({ name: recipe.value.trim() || 'Combined', color: 'var(--total)', total: true, ...aminoScore(totalAA.value.totals) })
@@ -300,17 +327,17 @@ const kb = (b) => (b / 1024).toFixed(b < 10240 ? 1 : 0) + ' KB'
         <div class="table-wrap">
           <table class="macros" data-testid="macros">
             <thead>
-              <tr><th>Food</th><th>g</th><th v-for="m in MACROS" :key="m.key">{{ m.label }}<small>{{ m.unit }}</small></th></tr>
+              <tr><th>Food</th><th>g</th><th v-for="m in [...MACROS, ...FAT_DETAIL]" :key="m.key">{{ m.label }}<small>{{ m.unit }}</small></th></tr>
             </thead>
             <tbody>
               <tr v-for="r in loaded" :key="r.id">
                 <td class="fname"><span class="dot sm" :style="{ background: r.color }"></span>{{ shortName(r.food.name) }}</td>
                 <td>{{ fmt(r.grams, 0) }}</td>
-                <td v-for="m in MACROS" :key="m.key">{{ r.food[m.key] == null ? '—' : fmt((r.food[m.key] * r.grams) / 100, m.digits) }}</td>
+                <td v-for="m in [...MACROS, ...FAT_DETAIL]" :key="m.key"><span v-if="r.food[m.key] == null" class="nd" title="no data">n/a</span><template v-else>{{ fmt((r.food[m.key] * r.grams) / 100, m.digits) }}</template></td>
               </tr>
             </tbody>
             <tfoot v-if="loaded.length > 1">
-              <tr><td>Total</td><td>{{ fmt(totalAll.grams, 0) }}</td><td v-for="m in MACROS" :key="m.key">{{ fmt(totalAll.totals[m.key], m.digits) }}<sup v-if="totalAll.missing[m.key]" title="Some foods have no value for this nutrient">*</sup></td></tr>
+              <tr><td>Total</td><td>{{ fmt(totalAll.grams, 0) }}</td><td v-for="m in [...MACROS, ...FAT_DETAIL]" :key="m.key">{{ fmt(totalAll.totals[m.key], m.digits) }}<sup v-if="totalAll.missing[m.key]" title="Some foods have no value for this nutrient">*</sup></td></tr>
             </tfoot>
           </table>
         </div>
@@ -327,23 +354,26 @@ const kb = (b) => (b / 1024).toFixed(b < 10240 ? 1 : 0) + ' KB'
     <section class="col-right">
       <div class="card chart-card o-chart">
         <div class="card-head wrap">
-          <h2>{{ recipe.trim() || 'Essential amino acids' }}</h2>
+          <h2>{{ recipe.trim() || (isAA ? 'Essential amino acids' : CHARTS.find((c) => c.key === chartType).label) }}</h2>
           <div class="seg-ctl" role="tablist" data-testid="modes">
-            <button v-for="m in MODES" :key="m.key" role="tab" :aria-selected="mode === m.key" :class="{ on: mode === m.key }" :title="m.hint" @click="mode = m.key">{{ m.label }}</button>
+            <button v-for="m in modes" :key="m.key" role="tab" :aria-selected="mode === m.key" :class="{ on: mode === m.key }" :title="m.hint" @click="mode = m.key">{{ m.label }}</button>
           </div>
         </div>
-        <p class="muted small hint">{{ MODES.find((m) => m.key === mode).hint }}.</p>
-        <div class="chart-opts" v-if="withAA.length && mode === 'who'">
+        <div class="chart-tabs" role="tablist" aria-label="Chart" data-testid="charts">
+          <button v-for="c in CHARTS" :key="c.key" role="tab" :aria-selected="chartType === c.key" :class="{ on: chartType === c.key }" @click="chartType = c.key">{{ c.label }}</button>
+        </div>
+        <p class="muted small hint">{{ (modes.find((m) => m.key === mode) || modes[0]).hint }}.</p>
+        <div class="chart-opts" v-if="isAA && withAA.length && mode === 'who'">
           <label class="check" v-if="mode === 'who'">Body weight <input class="kg" type="number" min="10" max="250" v-model.number="weight" /> kg</label>
         </div>
-        <RadarChart v-if="chart.layers.length" :axes="axes" :layers="chart.layers" :refs="chart.refs" :total-name="chart.totalName" :unit="unit" :format="chartFmt" :min-max="mode === 'who' ? 100 : 0" />
+        <RadarChart v-if="view.layers.length" :axes="view.axes" :layers="view.layers" :refs="view.refs" :total-name="view.totalName" :unit="view.unit" :format="view.fmt" :min-max="view.minMax" :cap="view.cap" :no-data="view.noData" :partial="view.partial" />
         <div v-else class="chart-empty">
           <svg viewBox="0 0 200 200" width="180" aria-hidden="true"><polygon points="100,15 180,70 150,170 50,170 20,70" fill="none" stroke="var(--line)" stroke-width="2" /><polygon points="100,55 140,80 125,135 70,140 55,85" fill="var(--accent)" fill-opacity=".18" stroke="var(--accent)" stroke-width="2" /></svg>
-          <p class="muted">{{ dbState === 'error' ? 'Could not load the food database.' : loaded.length ? 'None of these foods has a full amino acid profile in USDA data.' : 'Add foods to see their amino acid profile.' }}</p>
+          <p class="muted">{{ dbState === 'error' ? 'Could not load the food database.' : loaded.length ? 'None of these foods has a full amino acid profile in USDA data.' : 'Add foods to see their nutrient profile.' }}</p>
         </div>
-        <p v-if="withoutAA.length && withAA.length" class="muted small">{{ withoutAA.length }} food{{ withoutAA.length > 1 ? 's' : '' }} without amino acid data excluded from the chart.</p>
+        <p v-if="isAA && withoutAA.length && withAA.length" class="muted small">{{ withoutAA.length }} food{{ withoutAA.length > 1 ? 's' : '' }} without amino acid data excluded from the chart.</p>
 
-        <div v-if="chart.layers.length" class="table-wrap">
+        <div v-if="isAA && chart.layers.length" class="table-wrap">
           <table class="aa-table" data-testid="aa-table">
             <thead><tr>
               <th></th>
@@ -363,7 +393,35 @@ const kb = (b) => (b / 1024).toFixed(b < 10240 ? 1 : 0) + ' KB'
           <p class="muted small">Unit: {{ unit }}<template v-if="chart.layers.length > 1"> · food columns are each food's contribution and add up to “{{ chart.totalName }}”<template v-if="mode === 'per100' || mode === 'protein'">, the value {{ mode === 'per100' ? 'per 100 g' : 'per g protein' }} of the whole meal ({{ fmt(totalAA.grams, 0) }} g, {{ fmt(totalAA.totals.protein, 1) }} g protein)</template></template></p>
         </div>
 
-        <div v-if="scores.length" class="scores">
+        <div v-if="!isAA && view.layers.length" class="table-wrap">
+          <table class="aa-table dv-table" data-testid="aa-table">
+            <thead><tr>
+              <th></th>
+              <th class="tot">{{ view.layers.length > 1 ? view.totalName : '% DV' }}</th>
+              <th>Amount</th>
+              <th>DV</th>
+              <th v-for="(l, li) in view.layers" :key="li" class="fcol" :title="l.name"><span class="dot sm" :style="{ background: l.color, borderColor: l.color }"></span>{{ l.name }}</th>
+            </tr></thead>
+            <tbody>
+              <tr v-for="(a, i) in view.axes" :key="a.key">
+                <td :title="a.note || a.label">{{ a.label }}<span v-if="a.limit" title="Daily Value is an upper limit">†</span></td>
+                <td class="tot" data-testid="aa-total"><span v-if="view.allMissing[i]" class="nd">no data</span><template v-else>{{ pctFmt(view.total[i]) }}<sup v-if="view.nMissing[i]" :title="`${view.nMissing[i]} food(s) have no data; total is a lower bound`">*</sup></template></td>
+                <td class="amt"><span v-if="view.allMissing[i]" class="nd">—</span><template v-else>{{ amtFmt(view.amount[i]) }} {{ a.unit }}</template></td>
+                <td class="amt">{{ a.dv.toLocaleString() }} {{ a.unit }}</td>
+                <td v-for="(l, li) in view.layers" :key="li" class="fcol"><span v-if="l.missing[i]" class="nd" title="USDA has no value for this food">no data</span><template v-else>{{ pctFmt(l.values[i]) }}</template></td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="muted small">
+            Unit: {{ view.unit }}; food columns are each food's share of the total<template v-if="mode === 'per100'"> (meal: {{ fmt(totalAll.grams, 0) }} g)</template>.
+            “no data” = USDA has no value for that food (not zero); <sup>*</sup> = total is a lower bound because some foods have no data.
+            <template v-if="hasLimit"> † = Daily Value is a maximum, not a target.</template>
+            <template v-for="a in axisNotes" :key="a.key"> {{ a.label }}: {{ a.note }}.</template>
+            Daily Values: U.S. FDA (21 CFR 101.9).
+          </p>
+        </div>
+
+        <div v-if="isAA && scores.length" class="scores">
           <h3>Amino acid score <span class="muted small">vs WHO/FAO/UNU 2007 adult pattern</span></h3>
           <ul>
             <li v-for="s in scores" :key="s.name" :class="{ total: s.total }">
@@ -385,7 +443,8 @@ const kb = (b) => (b / 1024).toFixed(b < 10240 ? 1 : 0) + ' KB'
       Data: <a href="https://fdc.nal.usda.gov/" target="_blank" rel="noopener">USDA FoodData Central</a> (public domain) —
       {{ dbInfo?.source?.replace(/^.*?:\s*/, '') || 'SR Legacy 2018-04; Foundation Foods 2026-04-30' }}.
       Values per 100 g edible portion.
-      Reference requirements: WHO/FAO/UNU (2007) <a href="https://iris.who.int/handle/10665/43411" target="_blank" rel="noopener"><i>Protein and amino acid requirements in human nutrition</i></a>, WHO TRS 935 (adult).
+      Daily Values: U.S. FDA <a href="https://www.fda.gov/food/nutrition-facts-label/daily-value-nutrition-and-supplement-facts-labels" target="_blank" rel="noopener">Daily Value reference guide</a> (21 CFR 101.9, adults &amp; children ≥4 y; 2,000 kcal reference diet).
+      Amino acid requirements: WHO/FAO/UNU (2007) <a href="https://iris.who.int/handle/10665/43411" target="_blank" rel="noopener"><i>Protein and amino acid requirements in human nutrition</i></a>, WHO TRS 935 (adult).
       Not medical advice.
     </p>
     <p class="muted small" data-testid="dbstats">

@@ -153,3 +153,15 @@ tfoot td { font-weight: 700; border-bottom: none; }
 .foot p { margin: .3rem 0; }
 
 .aa-table .tot { font-weight: 700; }
+.radar .axis-labels text.nodata { fill: var(--muted); font-weight: 400; }
+.radar .axis-labels .nd-tag { font-size: 9.5px; font-style: italic; }
+.radar .clip-labels text { font-size: 10px; font-weight: 700; fill: var(--total); paint-order: stroke; stroke: var(--card); stroke-width: 3px; }
+.chart-tabs { display: flex; gap: .3rem; flex-wrap: wrap; margin-bottom: .7rem; }
+.chart-tabs button { border-radius: 99px; padding: .35rem .85rem; font-size: .85rem; }
+.chart-tabs button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+:root[data-theme="dark"] .chart-tabs button.on { color: #052e1f; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .chart-tabs button.on { color: #052e1f; } }
+.nd { color: var(--muted); font-style: italic; }
+.aa-table td.amt { color: var(--muted); }
+.dv-table th.fcol { max-width: 6.5rem; }
+.dv-table td:first-child { max-width: 11rem; overflow: hidden; text-overflow: ellipsis; }

@@ -34,6 +34,20 @@ COLS = {
     "fiber": ["291"],
     "sugars": ["269", "269.3"],
     "water": ["255"],
+    "satfat": ["606"], "mufa": ["645"], "pufa": ["646"],
+    # vitamins (USDA units: µg or mg per 100 g)
+    "vita": ["320"],            # Vitamin A, RAE (µg)
+    "vitc": ["401"],            # Vitamin C (mg)
+    "vitd": ["328"],            # Vitamin D2+D3 (µg)
+    "vite": ["323"],            # Vitamin E, alpha-tocopherol (mg)
+    "vitk": ["430"],            # Vitamin K1, phylloquinone (µg)
+    "b1": ["404"], "b2": ["405"], "b3": ["406"], "b6": ["415"],   # mg (niacin = preformed, not NE)
+    "folate": ["435", "417"],   # Folate DFE (µg); Foundation Foods only report total folate (unfortified => DFE = food folate)
+    "b12": ["418"],             # µg
+    # minerals
+    "ca": ["301"], "fe": ["303"], "mg": ["304"], "p": ["305"], "k": ["306"], "na": ["307"],
+    "zn": ["309"], "cu": ["312"], "mn": ["315"],   # mg
+    "se": ["317"],              # µg
     "trp": ["501"], "thr": ["502"], "ile": ["503"], "leu": ["504"], "lys": ["505"],
     "met": ["506"], "cys": ["507"], "phe": ["508"], "tyr": ["509"], "val": ["510"], "his": ["512"],
 }
@@ -115,6 +129,9 @@ def main():
     CREATE TABLE foods(
       id INTEGER PRIMARY KEY, name TEXT NOT NULL, cat INTEGER, src INTEGER, has_aa INTEGER,
       kcal REAL, protein REAL, fat REAL, carbs REAL, fiber REAL, sugars REAL, water REAL,
+      satfat REAL, mufa REAL, pufa REAL,
+      vita REAL, vitc REAL, vitd REAL, vite REAL, vitk REAL, b1 REAL, b2 REAL, b3 REAL, b6 REAL, folate REAL, b12 REAL,
+      ca REAL, fe REAL, mg REAL, p REAL, k REAL, na REAL, zn REAL, cu REAL, mn REAL, se REAL,
       trp REAL, thr REAL, ile REAL, leu REAL, lys REAL, met REAL, cys REAL, phe REAL, tyr REAL, val REAL, his REAL);
     CREATE TABLE portions(fdc_id INTEGER, seq INTEGER, label TEXT, grams REAL, PRIMARY KEY(fdc_id, seq, label)) WITHOUT ROWID;
     -- standalone FTS5 table: search results (name, category, has-AA flag) come entirely from it
@@ -127,11 +144,11 @@ def main():
         f = foods[fid]
         vals = {}
         for col, keys in COLS.items():
-            vals[col] = next((round(f["v"][k], 4) for k in keys if k in f["v"]), None)
+            vals[col] = next((float("%.4g" % f["v"][k]) for k in keys if k in f["v"]), None)
         has = int(all(vals[c] is not None for c in EAA))
         nfull += has
         rows.append((fid, f["name"], f["cat"], f["src"], has, *[vals[c] for c in COLS]))
-    db.executemany("INSERT INTO foods VALUES(%s)" % ",".join("?" * (5 + len(COLS))), rows)
+    db.executemany("INSERT INTO foods(id,name,cat,src,has_aa,%s) VALUES(%s)" % (",".join(COLS), ",".join("?" * (5 + len(COLS)))), rows)
     db.executemany("INSERT INTO foods_fts(rowid,name,flags,cat) VALUES(?,?,?,?)",
                    [(r[0], r[1], "aa" if r[4] else "", r[2]) for r in rows])
     db.executemany("INSERT OR IGNORE INTO portions VALUES(?,?,?,?)", portions)
@@ -139,7 +156,7 @@ def main():
         "source": "USDA FoodData Central (public domain): " + "; ".join(d[3] for d in DATASETS),
         "source_url": "https://fdc.nal.usda.gov/",
         "foods": str(len(rows)), "foods_with_eaa": str(nfull),
-        "units": "g per 100 g edible portion (kcal per 100 g for energy)",
+        "units": "per 100 g edible portion: g (macros, amino acids), kcal (energy), mg (vitc vite b1 b2 b3 b6 ca fe mg p k na zn cu mn), µg (vita vitd vitk folate b12 se)",
     }
     db.executemany("INSERT INTO meta VALUES(?,?)", meta.items())
     db.commit()

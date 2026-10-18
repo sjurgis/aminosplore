@@ -49,7 +49,7 @@ assert(await page.locator('[data-testid=radar] .total-line polygon').count() ===
 const axes = await page.locator('[data-testid=radar] .axis-labels text').allTextContents()
 assert(axes.length === 9 && axes.some((t) => t.includes('Trp')), `9 axes incl. tryptophan: ${axes.join(',')}`)
 const macroTotal = await page.locator('[data-testid=macros] tfoot td').allTextContents()
-assert(macroTotal.length === 9, `macros total row: ${macroTotal.join(' | ')}`)
+assert(macroTotal.length === 12, `macros total row: ${macroTotal.join(' | ')}`)
 await page.screenshot({ path: `${shots}/aminosplore-2foods.png`, fullPage: true })
 
 // stacked sums: in every mode each food column <= total and columns add up to the total
@@ -132,6 +132,59 @@ for (const m of ['Amount', 'Per 100 g', 'Per g protein', '% daily need']) {
 }
 await gc.getByTestId('modes').getByRole('tab', { name: 'Per g protein' }).click()
 await gc.locator('.chart-card').screenshot({ path: `${shots}/aminosplore-stacked-protein.png` })
+// %DV charts: macros / vitamins / minerals, with a food that has gaps (grape tomatoes)
+const dvp = await ctx.newPage()
+dvp.on('pageerror', (e) => errors.push(String(e)))
+await dvp.goto(base + '#f=169961:150,171477:120,321360:80&r=Chicken+%26+veg', { waitUntil: 'networkidle' })
+await dvp.waitForFunction(() => document.querySelectorAll('[data-testid=radar] path.band').length === 2, null, { timeout: 20000 })
+async function dvTableCheck(p, label) {
+  const rows = await p.locator('[data-testid=aa-table] tbody tr').evaluateAll((trs) => trs.map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent.trim())))
+  const nFoods = await p.locator('[data-testid=radar] path.band').count()
+  let nd = 0
+  for (const r of rows) {
+    const cells = r.slice(4, 4 + nFoods), totTxt = r[1].replace('*', '')  // label | total | amount | DV | foods...
+    nd += cells.filter((c) => c === 'no data').length
+    if (totTxt === 'no data') { if (!cells.every((c) => c === 'no data')) throw new Error(`${label}: total no data but foods have data: ${r.join(' | ')}`); continue }
+    const half = (t) => (t === 'no data' ? 0 : 0.5 * 10 ** -((t.split('.')[1] || '').length))
+    const vals = cells.map((c) => (c === 'no data' ? 0 : Number(c)))
+    const sum = vals.reduce((a, b) => a + b, 0), total = Number(totTxt)
+    const tol = [...cells, totTxt].reduce((a, t) => a + half(t), 0) + 1e-9
+    if (Math.abs(sum - total) > tol || vals.some((v) => v > total + tol)) throw new Error(`${label}: row ${r.join(' | ')} does not stack`)
+    if (r[1].includes('*') !== (cells.includes('no data') && totTxt !== 'no data')) throw new Error(`${label}: partial-data marker wrong in ${r.join(' | ')}`)
+  }
+  log('ok:', label, `${rows.length} axes stack, ${nd} "no data" cells,`, rows[0].join(' | '))
+  return nd
+}
+const bandCount = async (p) => p.locator('[data-testid=radar] path.band').count()
+for (const [tab, c, nAxes] of [['Macros', 'macro', 7], ['Vitamins', 'vit', 11], ['Minerals', 'min', 10]]) {
+  await dvp.getByTestId('charts').getByRole('tab', { name: tab }).click()
+  await dvp.waitForTimeout(200)
+  const h = await dvp.evaluate(() => location.hash)
+  assert(h.includes('c=' + c) && !h.includes('m='), `${tab}: hash has c=${c}, default %DV mode: ${h}`)
+  assert(await bandCount(dvp) === 3, `${tab}: 3 stacked bands (all foods)`)
+  const ax = await dvp.locator('[data-testid=radar] .axis-labels text').count()
+  assert(ax === nAxes, `${tab}: ${nAxes} axes`)
+  assert(await dvp.locator('.legend li', { hasText: '100% Daily Value' }).count() === 1, `${tab}: 100% DV reference outline`)
+  const nd = await dvTableCheck(dvp, `${tab} %DV`)
+  if (c === 'vit') assert(nd > 0 && (await dvp.locator('[data-testid=radar] .axis-labels text', { hasText: '*' }).count()) > 0, 'vitamins: missing data shown as "no data" + axis *')
+  await dvp.screenshot({ path: `${shots}/aminosplore-chart-${c}.png`, fullPage: true })
+  await dvp.getByTestId('modes').getByRole('tab', { name: 'Per 100 g' }).click()
+  await dvp.waitForTimeout(150)
+  assert((await dvp.evaluate(() => location.hash)).includes('m=per100'), `${tab}: per-100 g mode in hash`)
+  await dvTableCheck(dvp, `${tab} per 100 g`)
+  await dvp.getByTestId('modes').getByRole('tab', { name: '% Daily Value' }).click()
+}
+await dvp.reload({ waitUntil: 'networkidle' })
+await dvp.waitForFunction(() => document.querySelectorAll('[data-testid=radar] path.band').length === 3, null, { timeout: 20000 })
+assert(await dvp.getByTestId('charts').getByRole('tab', { name: 'Minerals' }).getAttribute('aria-selected') === 'true', 'reload restores chart type')
+await dvp.getByTestId('charts').getByRole('tab', { name: 'Amino acids' }).click()
+await dvp.waitForTimeout(150)
+assert(await bandCount(dvp) === 2 && !(await dvp.evaluate(() => location.hash)).includes('c='), 'back to amino acids: 2 bands (tomato has no AA data), c= dropped')
+await dvp.screenshot({ path: `${shots}/aminosplore-chart-aa.png`, fullPage: true })
+await dvp.getByTestId('charts').getByRole('tab', { name: 'Vitamins' }).click()
+await dvp.waitForTimeout(150)
+await dvp.locator('.chart-card').screenshot({ path: `${shots}/aminosplore-chart-vit-card.png` })
+
 const dk = await browser.newContext({ viewport: { width: 1360, height: 1000 }, colorScheme: 'dark' })
 const dp = await dk.newPage()
 await dp.goto(base + '#f=169961:150,171477:120', { waitUntil: 'networkidle' })

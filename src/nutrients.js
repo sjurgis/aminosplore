@@ -8,8 +8,85 @@ export const MACROS = [
   { key: 'sugars', label: 'Sugars', unit: 'g', digits: 1 },
   { key: 'water', label: 'Water', unit: 'g', digits: 0 },
 ]
+export const FAT_DETAIL = [
+  { key: 'satfat', label: 'Sat. fat', unit: 'g', digits: 1 },
+  { key: 'mufa', label: 'Mono', unit: 'g', digits: 1 },
+  { key: 'pufa', label: 'Poly', unit: 'g', digits: 1 },
+]
 export const AA_KEYS = ['trp', 'thr', 'ile', 'leu', 'lys', 'met', 'cys', 'phe', 'tyr', 'val', 'his']
-export const FOOD_COLS = [...MACROS.map((m) => m.key), ...AA_KEYS]
+
+// % Daily Value charts. DVs: U.S. FDA Daily Values for adults and children >= 4 y
+// (21 CFR 101.9(c), 2016 Nutrition Facts rule), as listed at
+// https://www.fda.gov/food/nutrition-facts-label/daily-value-nutrition-and-supplement-facts-labels
+// Energy uses the 2,000 kcal reference diet. `limit: true` = DV is an amount not to exceed.
+export const MACRO_AXES = [
+  { key: 'kcal', label: 'Energy', short: 'Energy', unit: 'kcal', dv: 2000, note: '2,000 kcal reference diet' },
+  { key: 'protein', label: 'Protein', short: 'Protein', unit: 'g', dv: 50 },
+  { key: 'carbs', label: 'Carbohydrate', short: 'Carbs', unit: 'g', dv: 275 },
+  { key: 'fiber', label: 'Dietary fiber', short: 'Fiber', unit: 'g', dv: 28 },
+  { key: 'sugars', label: 'Sugars (total; vs added-sugars DV)', short: 'Sugars', unit: 'g', dv: 50, limit: true, note: 'USDA reports total sugars; the 50 g DV is for added sugars' },
+  { key: 'fat', label: 'Total fat', short: 'Fat', unit: 'g', dv: 78 },
+  { key: 'satfat', label: 'Saturated fat', short: 'Sat fat', unit: 'g', dv: 20, limit: true },
+]
+export const VIT_AXES = [
+  { key: 'vita', label: 'Vitamin A (RAE)', short: 'A', unit: 'µg', dv: 900 },
+  { key: 'vitc', label: 'Vitamin C', short: 'C', unit: 'mg', dv: 90 },
+  { key: 'vitd', label: 'Vitamin D (D2 + D3)', short: 'D', unit: 'µg', dv: 20 },
+  { key: 'vite', label: 'Vitamin E (α-tocopherol)', short: 'E', unit: 'mg', dv: 15 },
+  { key: 'vitk', label: 'Vitamin K (phylloquinone)', short: 'K', unit: 'µg', dv: 120 },
+  { key: 'b1', label: 'Thiamin (B1)', short: 'B1', unit: 'mg', dv: 1.2 },
+  { key: 'b2', label: 'Riboflavin (B2)', short: 'B2', unit: 'mg', dv: 1.3 },
+  { key: 'b3', label: 'Niacin (B3)', short: 'B3', unit: 'mg', dv: 16, note: 'USDA value is preformed niacin; the DV is in niacin equivalents' },
+  { key: 'b6', label: 'Vitamin B6', short: 'B6', unit: 'mg', dv: 1.7 },
+  { key: 'folate', label: 'Folate (DFE)', short: 'B9', unit: 'µg', dv: 400 },
+  { key: 'b12', label: 'Vitamin B12', short: 'B12', unit: 'µg', dv: 2.4 },
+]
+export const MIN_AXES = [
+  { key: 'ca', label: 'Calcium', short: 'Ca', unit: 'mg', dv: 1300 },
+  { key: 'fe', label: 'Iron', short: 'Fe', unit: 'mg', dv: 18 },
+  { key: 'mg', label: 'Magnesium', short: 'Mg', unit: 'mg', dv: 420 },
+  { key: 'p', label: 'Phosphorus', short: 'P', unit: 'mg', dv: 1250 },
+  { key: 'k', label: 'Potassium', short: 'K', unit: 'mg', dv: 4700 },
+  { key: 'na', label: 'Sodium', short: 'Na', unit: 'mg', dv: 2300, limit: true },
+  { key: 'zn', label: 'Zinc', short: 'Zn', unit: 'mg', dv: 11 },
+  { key: 'cu', label: 'Copper', short: 'Cu', unit: 'mg', dv: 0.9 },
+  { key: 'mn', label: 'Manganese', short: 'Mn', unit: 'mg', dv: 2.3 },
+  { key: 'se', label: 'Selenium', short: 'Se', unit: 'µg', dv: 55 },
+]
+export const CHARTS = [
+  { key: 'aa', label: 'Amino acids' },
+  { key: 'macro', label: 'Macros', axes: MACRO_AXES },
+  { key: 'vit', label: 'Vitamins', axes: VIT_AXES },
+  { key: 'min', label: 'Minerals', axes: MIN_AXES },
+]
+export const DV_MODES = [
+  { key: 'dv', label: '% Daily Value', hint: '% of the FDA Daily Value in the quantities you entered; each band is one food, the outer edge is the total' },
+  { key: 'per100', label: 'Per 100 g', hint: '% Daily Value per 100 g of the whole meal; each band is that food\'s share, the outer edge is the mixture value' },
+]
+export const FOOD_COLS = [...new Set([...MACROS.map((m) => m.key), ...FAT_DETAIL.map((m) => m.key), ...AA_KEYS,
+  ...MACRO_AXES.map((a) => a.key), ...VIT_AXES.map((a) => a.key), ...MIN_AXES.map((a) => a.key)])]
+
+/**
+ * Stacked %DV layers. items: [{ food (values per 100 g, null = no data), grams }].
+ *   dv:     amount_i / DV * 100                       (sum = % DV of the whole meal)
+ *   per100: amount_i * 100 / meal mass / DV * 100     (sum = % DV per 100 g of the whole meal)
+ * Missing values (null) contribute 0 but are flagged: missing[li][i] = true.
+ * Returns { layers, missing, total, amount (absolute total in axis unit), nMissing[i], allMissing[i] }.
+ */
+export function stackedDV(axes, items, mode) {
+  const mass = items.reduce((s, r) => s + r.grams, 0)
+  const missing = items.map((r) => axes.map((a) => r.food[a.key] == null))
+  const absLayers = items.map((r) => axes.map((a) => ((r.food[a.key] ?? 0) * r.grams) / 100))
+  const layers = absLayers.map((l) => l.map((v, i) => {
+    const amt = mode === 'per100' ? (mass > 0 ? (v * 100) / mass : 0) : v
+    return (amt / axes[i].dv) * 100
+  }))
+  const total = axes.map((_, i) => layers.reduce((s, l) => s + l[i], 0))
+  const amount = axes.map((_, i) => absLayers.reduce((s, l) => s + l[i], 0) * (mode === 'per100' ? (mass > 0 ? 100 / mass : 0) : 1))
+  const nMissing = axes.map((_, i) => missing.filter((m) => m[i]).length)
+  const allMissing = nMissing.map((n) => items.length > 0 && n === items.length)
+  return { layers, missing, total, amount, nMissing, allMissing }
+}
 
 // The nine essential amino acids, individually (USDA nutrient numbers 501–512).
 export const EAA = [
