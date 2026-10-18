@@ -1,201 +1,194 @@
-// End-to-end smoke test: node tests/e2e.mjs [baseUrl] [screenshotDir]
+// End-to-end test: node tests/e2e.mjs [baseUrl] [screenshotDir]
 import { chromium } from 'playwright'
 const base = process.argv[2] || 'http://localhost:4173/'
 const shots = process.argv[3] || '/tmp'
 const log = (...a) => console.log('•', ...a)
-const assert = (c, m) => { if (!c) { throw new Error('ASSERT: ' + m) } log('ok:', m) }
+const assert = (c, m) => { if (!c) throw new Error('ASSERT: ' + m); log('ok:', m) }
+const url = (h) => base + h
 
 const browser = await chromium.launch()
-const ctx = await browser.newContext({ viewport: { width: 1360, height: 1000 }, permissions: ['clipboard-read', 'clipboard-write'] })
-const page = await ctx.newPage()
-const errors = []
-page.on('pageerror', (e) => errors.push(String(e)))
-page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
-const ranges = [], badResp = []
-page.on('response', async (r) => {
-  if (!r.url().includes('foods.sqlite3') || r.request().method() !== 'GET') return
-  const h = await r.allHeaders()
-  if (r.status() !== 206 || h['content-encoding']) badResp.push(`${r.status()} ${h['content-encoding'] || ''} ${h['content-range'] || ''}`)
-})
-page.on('request', (r) => { if (r.url().includes('foods.sqlite3')) ranges.push(r.method() + ' ' + (r.headers()['range'] || 'no-range')) })
-
-await page.goto(base, { waitUntil: 'networkidle' })
-const search = page.getByTestId('search')
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, permissions: ['clipboard-read', 'clipboard-write'] })
+const errors = [], ranges = [], badResp = []
+function watch(p) {
+  p.on('pageerror', (e) => errors.push(String(e)))
+  p.on('console', (m) => { if (m.type() === 'error' || (m.type() === 'warning' && /Vue warn/.test(m.text()))) errors.push(m.text()) })
+  p.on('request', (r) => { if (r.url().includes('foods.sqlite3')) ranges.push(r.method() + ' ' + (r.headers()['range'] || 'no-range')) })
+  p.on('response', async (r) => {
+    if (!r.url().includes('foods.sqlite3') || r.request().method() !== 'GET') return
+    const h = await r.allHeaders()
+    if (r.status() !== 206 || h['content-encoding']) badResp.push(`${r.status()} ${h['content-encoding'] || ''}`)
+  })
+  return p
+}
+const page = watch(await ctx.newPage())
+const hash = (p = page) => p.evaluate(() => location.hash)
+const bands = (p, id) => p.locator(`[data-testid=chart-${id}] path.band`).count()
+const waitBands = (p, id, n) => p.waitForFunction(([id, n]) => document.querySelectorAll(`[data-testid=chart-${id}] path.band`).length === n, [id, n], { timeout: 20000 })
+const CHARTS = ['aa', 'macro', 'vit', 'min']
 
 async function addFood(q, pick) {
-  await search.fill(q)
+  await page.getByTestId('search').fill(q)
   await page.getByTestId('results').waitFor({ timeout: 20000 })
-  const opt = pick ? page.getByRole('option', { name: pick }).first() : page.getByRole('option').first()
+  const list = page.getByTestId('results')
+  const opt = pick ? list.getByRole('option', { name: pick }).first() : list.getByRole('option').first()
   const name = (await opt.locator('.r-name').textContent()).trim()
   await opt.dispatchEvent('mousedown')
   log('added', name)
   return name
 }
-const t0 = Date.now()
-const a = await addFood('lentils cooked boiled', /Lentils, mature seeds, cooked, boiled, without salt/)
-log('search+add took', Date.now() - t0, 'ms')
-const b = await addFood('rice white long grain cooked')
-await page.waitForFunction(() => document.querySelectorAll('[data-testid=items] li').length === 2)
-assert(true, '2 foods in list')
-const grams = page.getByTestId('grams')
-await grams.nth(0).fill('200')
-await grams.nth(1).fill('150')
+// every values table: band columns add up to the total (within display rounding); "no data" counts as 0
+async function tablesStack(p, label) {
+  for (const id of CHARTS) {
+    const card = p.getByTestId('chart-' + id)
+    if (!(await card.locator('details.values').count())) continue
+    await card.locator('details.values').evaluate((d) => (d.open = true))
+    const rows = await card.locator('[data-testid=values-table] tbody tr').evaluateAll((trs) => trs.map((tr) => ({
+      label: tr.cells[0].textContent.trim(),
+      total: tr.querySelector('[data-kind=total]').textContent.trim(),
+      layers: [...tr.querySelectorAll('[data-kind=layer]')].map((td) => td.textContent.trim()),
+    })))
+    const half = (t) => (t.includes('no data') ? 0 : 0.5 * 10 ** -((t.replace('*', '').split('.')[1] || '').length))
+    const val = (t) => (t.includes('no data') ? 0 : Number(t.replace('*', '')))
+    for (const r of rows) {
+      if (r.total.includes('no data')) continue
+      const sum = r.layers.reduce((s, t) => s + val(t), 0)
+      const tol = [...r.layers, r.total].reduce((s, t) => s + half(t), 0) + 1e-9
+      if (Math.abs(sum - val(r.total)) > tol) throw new Error(`${label} ${id}: ${r.label} ${r.layers.join('+')} != ${r.total}`)
+    }
+    await card.locator('details.values').evaluate((d) => (d.open = false))
+  }
+  log('ok:', label, '- all 4 value tables: bands add up to the total')
+}
+
+// ---- build a day from scratch ----
+await page.goto(base, { waitUntil: 'networkidle' })
+for (const id of CHARTS) assert(await page.getByTestId('chart-' + id).isVisible(), `chart ${id} visible on the page`)
+await addFood('lentils cooked boiled', /Lentils, mature seeds, cooked, boiled, without salt/)
+await page.getByTestId('meal-0').getByTestId('meal-name').fill('Lunch')
+await page.getByTestId('add-meal').click()
+assert((await page.getByTestId('meal-1').getByTestId('meal-name').inputValue()) === 'Breakfast', 'Add meal creates "Breakfast"')
+assert((await page.getByTestId('target').inputValue()) === '1', 'new meal becomes the add-to target')
+await addFood('oats regular quick cooked water', /Cereals, oats, regular and quick, unenriched, cooked with water/)
+await addFood('rice white long grain cooked')
+await page.getByTestId('add-meal').click()
+await page.getByTestId('meal-2').getByTestId('meal-name').fill('Dinner')
+await addFood('chicken broilers breast meat only roasted', /Chicken, broilers or fryers, breast, meat only, cooked, roasted/)
+await addFood('broccoli raw', /^Broccoli, raw/)
+await page.getByTestId('meal-0').click() // target Lunch by clicking the card
+await addFood('tomatoes grape raw', /Tomatoes, grape, raw/) // no AA data, vitamin gaps
+await page.getByTestId('meal-1').getByTestId('grams').nth(0).fill('240')
+await page.getByTestId('meal-2').getByTestId('grams').nth(0).fill('150')
 await page.waitForTimeout(300)
-let hash = await page.evaluate(() => location.hash)
-assert(/^#f=\d+:200,\d+:150$/.test(hash), `URL hash updated: ${hash}`)
-const bands = await page.locator('[data-testid=radar] path.band').count()
-assert(bands === 2, `stacked radar has 2 bands: ${bands}`)
-assert(await page.locator('[data-testid=radar] .total-line polygon').count() === 1, 'outer total outline drawn')
-const axes = await page.locator('[data-testid=radar] .axis-labels text').allTextContents()
-assert(axes.length === 9 && axes.some((t) => t.includes('Trp')), `9 axes incl. tryptophan: ${axes.join(',')}`)
-const macroTotal = await page.locator('[data-testid=macros] tfoot td').allTextContents()
-assert(macroTotal.length === 12, `macros total row: ${macroTotal.join(' | ')}`)
-await page.screenshot({ path: `${shots}/aminosplore-2foods.png`, fullPage: true })
+let h = await hash()
+assert(/^#d=Lunch~172421:100,\d+:100;Breakfast~173905:240,168878:100;Dinner~171477:150,170379:100$/.test(h), `URL encodes 3 meals: ${h}`)
 
-// stacked sums: in every mode each food column <= total and columns add up to the total
-async function tableCheck(p, label) {
-  const rows = await p.locator('[data-testid=aa-table] tbody tr').evaluateAll((trs) => trs.map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent.trim())))
-  const nFoods = await p.locator('[data-testid=radar] path.band').count()
-  for (const r of rows) {
-    const foods = r.slice(1, 1 + nFoods).map(Number), total = Number(r[1 + nFoods])
-    const sum = foods.reduce((a, b) => a + b, 0)
-    const half = (t) => 0.5 * 10 ** -((t.split('.')[1] || '').length) // display rounding of one cell
-    const tol = r.slice(1, 2 + nFoods).reduce((a, t) => a + half(t), 0) + 1e-9
-    if (!(foods.every((v, i) => v <= total + half(r[1 + i]) + half(r[1 + nFoods])) && Math.abs(sum - total) <= tol)) throw new Error(`${label}: row ${r.join(' | ')} does not stack`)
-  }
-  log('ok:', label, 'stacked columns add up,', rows[2].join(' | '))
-}
-for (const m of ['Amount', 'Per 100 g', 'Per g protein', '% daily need']) {
-  await page.getByTestId('modes').getByRole('tab', { name: m }).click()
-  await page.waitForTimeout(150)
-  await tableCheck(page, m)
-}
-await page.getByTestId('modes').getByRole('tab', { name: 'Amount' }).click()
-
-// mode switch
-await page.getByTestId('modes').getByRole('tab', { name: '% daily need' }).click()
+// move rice from Breakfast to Lunch
+await page.getByTestId('meal-1').getByTestId('move').nth(1).selectOption({ label: 'Lunch' })
 await page.waitForTimeout(200)
-hash = await page.evaluate(() => location.hash)
-assert(hash.includes('m=who'), `mode in hash: ${hash}`)
-const whoAxes = await page.locator('[data-testid=radar] .axis-labels text').allTextContents()
-assert(whoAxes.some((t) => t.includes('Met+Cys')), 'WHO mode uses Met+Cys / Phe+Tyr')
+h = await hash()
+assert(/Lunch~172421:100,321360:100,168878:100;Breakfast~173905:240;/.test(h), `rice moved to Lunch: ${h}`)
 
-// reload restores state
+// ---- day view: bands = meals; no outer total outline; dotted reference ----
+await waitBands(page, 'macro', 3)
+assert(await bands(page, 'aa') === 3 && await bands(page, 'vit') === 3 && await bands(page, 'min') === 3, 'day view: 3 bands (one per meal) in all 4 charts')
+assert(await page.locator('.total-line').count() === 0, 'no outer "total" outline drawn')
+assert(await page.locator('[data-testid=ref-line]').count() === 4, 'dotted daily reference on all 4 charts (default on)')
+const legend = await page.getByTestId('chart-vit').locator('.legend li').allTextContents()
+assert(legend.join('|') === 'Lunch|Breakfast|Dinner|100% Daily Value', `vitamins legend by meal: ${legend.join(', ')}`)
+assert((await page.getByTestId('chart-aa').locator('.legend').textContent()).includes('WHO daily need (70 kg)'), 'AA reference = WHO need for body weight')
+await tablesStack(page, 'day view')
+await page.screenshot({ path: `${shots}/aminosplore-day.png`, fullPage: true })
+
+await page.getByTestId('ref-toggle').uncheck()
+await page.waitForTimeout(150)
+assert(await page.locator('[data-testid=ref-line]').count() === 0 && (await hash()).includes('ref=0'), 'reference toggle off: no dotted lines, ref=0 in URL')
+await page.getByTestId('ref-toggle').check()
+await page.waitForTimeout(150)
+assert(await page.locator('[data-testid=ref-line]').count() === 4 && !(await hash()).includes('ref='), 'reference toggle back on')
+
+// AA unit + basis
+await page.getByTestId('aa-unit').getByRole('tab', { name: 'per g protein' }).click()
+await page.waitForTimeout(150)
+assert((await hash()).includes('a=protein') && (await page.getByTestId('chart-aa').locator('.legend').textContent()).includes('WHO adult pattern'), 'AA per g protein: WHO pattern reference, a=protein')
+await page.getByTestId('basis').getByRole('tab', { name: 'Per 100 g' }).click()
+await page.waitForTimeout(150)
+assert((await hash()).includes('m=per100'), 'basis per 100 g in URL')
+assert(await page.locator('[data-testid=ref-line]').count() === 1, 'per 100 g: only the AA pattern reference remains (DVs are per day)')
+await tablesStack(page, 'day per 100 g')
+await page.getByTestId('basis').getByRole('tab', { name: 'Your portions' }).click()
+await page.getByTestId('aa-unit').getByRole('tab', { name: 'g', exact: true }).click()
+
+// ---- single meal view: bands = foods ----
+await page.getByTestId('views').getByRole('tab', { name: 'Lunch' }).click()
+await waitBands(page, 'vit', 3)
+assert(await bands(page, 'aa') === 2 && (await hash()).includes('v=0'), 'Lunch view: bands = foods (3 in vitamins, 2 with AA data), v=0 in URL')
+assert((await page.getByTestId('chart-macro').locator('[data-kind=total]').count()) > 0 && (await page.locator('[data-testid=macros] tfoot td').first().textContent()) === 'Lunch', 'meal view macros total row is the meal')
+await tablesStack(page, 'Lunch view')
+await page.screenshot({ path: `${shots}/aminosplore-meal.png`, fullPage: true })
+
+// ---- reload restores everything ----
+const before = await hash()
 await page.reload({ waitUntil: 'networkidle' })
-await page.waitForFunction(() => document.querySelectorAll('[data-testid=items] .item-name:not(.muted)').length === 2, null, { timeout: 20000 })
-const names = await page.locator('[data-testid=items] .item-name').allTextContents()
-assert(names[0] === a && names[1] === b, `reload restored foods: ${names.join(' / ')}`)
-assert((await grams.nth(0).inputValue()) === '200', 'reload restored grams')
-assert(await page.getByRole('tab', { name: '% daily need' }).getAttribute('aria-selected') === 'true', 'reload restored mode')
+await waitBands(page, 'vit', 3)
+assert((await hash()) === before, 'reload keeps URL')
+const names = await page.getByTestId('meal-name').evaluateAll((els) => els.map((e) => e.value))
+assert(names.join() === 'Lunch,Breakfast,Dinner', 'reload restores meal names')
+assert(await page.getByTestId('views').getByRole('tab', { name: 'Lunch' }).getAttribute('aria-selected') === 'true', 'reload restores the meal view')
 
-// recipe: name it, copy link, open in fresh page
-await page.getByTestId('recipe-name').fill('Dal & rice')
-await page.waitForTimeout(200)
-hash = await page.evaluate(() => location.hash)
-assert(hash.includes('r=Dal+%26+rice'), `recipe name in hash: ${hash}`)
+// ---- share links ----
+await page.getByTestId('share-meal-2').click()
+const mealLink = await page.evaluate(() => navigator.clipboard.readText())
+assert(/#d=Dinner~171477:150,170379:100$/.test(mealLink), `single-meal link: ${mealLink}`)
 await page.getByTestId('share').click()
-const link = await page.evaluate(() => navigator.clipboard.readText())
-assert(link.endsWith(hash), `copied link = current URL: ${link}`)
-await page.getByTestId('save').click()
-const p2 = await ctx.newPage()
-p2.on('pageerror', (e) => errors.push(String(e)))
-await p2.goto(link, { waitUntil: 'networkidle' })
-await p2.waitForFunction(() => document.querySelectorAll('[data-testid=items] .item-name:not(.muted)').length === 2, null, { timeout: 20000 })
-assert((await p2.locator('.chart-card h2').textContent()) === 'Dal & rice', 'recipe link shows recipe name as title')
-assert((await p2.getByTestId('recipe-name').inputValue()) === 'Dal & rice', 'recipe name field restored')
-assert(await p2.locator('.legend li', { hasText: 'Dal & rice' }).count() === 1, 'combined series named after recipe')
-await p2.getByRole('tab', { name: 'Per g protein' }).click()
-await p2.waitForTimeout(200)
-assert(await p2.locator('.legend li', { hasText: 'WHO adult pattern' }).count() === 1, 'per-g-protein shows WHO reference')
-const score = await p2.locator('.scores li.total').textContent()
-log('combined score row:', score.replace(/\s+/g, ' '))
-await p2.screenshot({ path: `${shots}/aminosplore-recipe.png`, fullPage: true })
+const dayLink = await page.evaluate(() => navigator.clipboard.readText())
+assert(dayLink.includes('d=Lunch~') && !dayLink.includes('v='), `day link: ${dayLink}`)
+const p2 = watch(await ctx.newPage())
+await p2.goto(mealLink, { waitUntil: 'networkidle' })
+await waitBands(p2, 'aa', 2)
+assert((await p2.getByTestId('meal-name').count()) === 1 && (await p2.getByTestId('meal-name').inputValue()) === 'Dinner', 'meal link opens just that meal (bands = its foods)')
+await p2.goto(dayLink, { waitUntil: 'networkidle' })
+await p2.reload({ waitUntil: 'networkidle' })
+await waitBands(p2, 'macro', 3)
+assert((await p2.getByTestId('meal-name').count()) === 3 && (await p2.getByTestId('views').getByRole('tab', { name: 'Day total' }).getAttribute('aria-selected')) === 'true', 'day link opens all 3 meals in day view')
 
-// mobile + dark
+// ---- legacy link ----
+await p2.goto(url('#f=172421:200,168878:150&r=Dal+%26+rice&m=who&c=vit'), { waitUntil: 'networkidle' })
+await p2.reload({ waitUntil: 'networkidle' })
+await waitBands(p2, 'aa', 2)
+h = await hash(p2)
+assert(h === '#d=Dal+%26+rice~172421:200,168878:150&a=who', `legacy #f=&r=&m=who link migrated: ${h}`)
+assert((await p2.getByTestId('meal-name').inputValue()) === 'Dal & rice' && await p2.getByTestId('aa-unit').getByRole('tab', { name: '% need' }).getAttribute('aria-selected') === 'true', 'legacy recipe name + amino mode kept')
+
+// ---- long state is lz-compressed ----
+const ids = [169961, 171477, 172421, 168878, 321360, 173905, 173944, 171265, 175168, 170093, 170379, 168462]
+const longHash = '#d=' + Array.from({ length: 14 }, (_, i) => `Meal+${i + 1}~` + ids.map((id, j) => `${id}:${10 + i + j}`).join(',')).join(';')
+await p2.goto(url(longHash), { waitUntil: 'networkidle' })
+await p2.reload({ waitUntil: 'networkidle' })
+await waitBands(p2, 'macro', 14)
+const z = await hash(p2)
+assert(z.startsWith('#z=') && z.length < longHash.length, `long day (${longHash.length} chars) compressed to ${z.length} chars`)
+await p2.reload({ waitUntil: 'networkidle' })
+await waitBands(p2, 'macro', 14)
+assert((await p2.getByTestId('meal-name').count()) === 14, 'compressed link restores 14 meals')
+
+// ---- mobile + dark ----
 const m = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: 'dark', deviceScaleFactor: 2 })
-const mp = await m.newPage()
-await mp.goto(link.replace(/m=\w+/, 'm=amount'), { waitUntil: 'networkidle' })
-await mp.waitForFunction(() => document.querySelectorAll('[data-testid=items] .item-name:not(.muted)').length === 2, null, { timeout: 20000 })
+const mp = watch(await m.newPage())
+await mp.goto(dayLink, { waitUntil: 'networkidle' })
+await waitBands(mp, 'macro', 3)
+assert(!(await mp.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)), 'no horizontal overflow on mobile')
+const xs = await mp.locator('.chart-card').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().x)))
+assert(new Set(xs).size === 1, 'mobile: charts stacked in one column')
 await mp.screenshot({ path: `${shots}/aminosplore-mobile-dark.png`, fullPage: true })
-const overflow = await mp.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)
-assert(!overflow, 'no horizontal overflow on mobile')
+const dk = await browser.newContext({ viewport: { width: 1440, height: 1000 }, colorScheme: 'dark' })
+const dp = watch(await dk.newPage())
+await dp.goto(dayLink, { waitUntil: 'networkidle' })
+await waitBands(dp, 'macro', 3)
+await dp.locator('.charts').screenshot({ path: `${shots}/aminosplore-charts-dark.png` })
 
-// user-reported case: green beans + chicken; total must be >= chicken alone in absolute modes
-const gc = await ctx.newPage()
-await gc.goto(base + '#f=169961:150,171477:120', { waitUntil: 'networkidle' })
-await gc.waitForFunction(() => document.querySelectorAll('[data-testid=radar] path.band').length === 2, null, { timeout: 20000 })
-for (const m of ['Amount', 'Per 100 g', 'Per g protein', '% daily need']) {
-  await gc.getByTestId('modes').getByRole('tab', { name: m }).click()
-  await gc.waitForTimeout(150)
-  await tableCheck(gc, 'beans+chicken ' + m)
-  if (m === 'Amount') await gc.screenshot({ path: `${shots}/aminosplore-stacked-amount.png`, fullPage: true })
-}
-await gc.getByTestId('modes').getByRole('tab', { name: 'Per g protein' }).click()
-await gc.locator('.chart-card').screenshot({ path: `${shots}/aminosplore-stacked-protein.png` })
-// %DV charts: macros / vitamins / minerals, with a food that has gaps (grape tomatoes)
-const dvp = await ctx.newPage()
-dvp.on('pageerror', (e) => errors.push(String(e)))
-await dvp.goto(base + '#f=169961:150,171477:120,321360:80&r=Chicken+%26+veg', { waitUntil: 'networkidle' })
-await dvp.waitForFunction(() => document.querySelectorAll('[data-testid=radar] path.band').length === 2, null, { timeout: 20000 })
-async function dvTableCheck(p, label) {
-  const rows = await p.locator('[data-testid=aa-table] tbody tr').evaluateAll((trs) => trs.map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent.trim())))
-  const nFoods = await p.locator('[data-testid=radar] path.band').count()
-  let nd = 0
-  for (const r of rows) {
-    const cells = r.slice(4, 4 + nFoods), totTxt = r[1].replace('*', '')  // label | total | amount | DV | foods...
-    nd += cells.filter((c) => c === 'no data').length
-    if (totTxt === 'no data') { if (!cells.every((c) => c === 'no data')) throw new Error(`${label}: total no data but foods have data: ${r.join(' | ')}`); continue }
-    const half = (t) => (t === 'no data' ? 0 : 0.5 * 10 ** -((t.split('.')[1] || '').length))
-    const vals = cells.map((c) => (c === 'no data' ? 0 : Number(c)))
-    const sum = vals.reduce((a, b) => a + b, 0), total = Number(totTxt)
-    const tol = [...cells, totTxt].reduce((a, t) => a + half(t), 0) + 1e-9
-    if (Math.abs(sum - total) > tol || vals.some((v) => v > total + tol)) throw new Error(`${label}: row ${r.join(' | ')} does not stack`)
-    if (r[1].includes('*') !== (cells.includes('no data') && totTxt !== 'no data')) throw new Error(`${label}: partial-data marker wrong in ${r.join(' | ')}`)
-  }
-  log('ok:', label, `${rows.length} axes stack, ${nd} "no data" cells,`, rows[0].join(' | '))
-  return nd
-}
-const bandCount = async (p) => p.locator('[data-testid=radar] path.band').count()
-for (const [tab, c, nAxes] of [['Macros', 'macro', 7], ['Vitamins', 'vit', 11], ['Minerals', 'min', 10]]) {
-  await dvp.getByTestId('charts').getByRole('tab', { name: tab }).click()
-  await dvp.waitForTimeout(200)
-  const h = await dvp.evaluate(() => location.hash)
-  assert(h.includes('c=' + c) && !h.includes('m='), `${tab}: hash has c=${c}, default %DV mode: ${h}`)
-  assert(await bandCount(dvp) === 3, `${tab}: 3 stacked bands (all foods)`)
-  const ax = await dvp.locator('[data-testid=radar] .axis-labels text').count()
-  assert(ax === nAxes, `${tab}: ${nAxes} axes`)
-  assert(await dvp.locator('.legend li', { hasText: '100% Daily Value' }).count() === 1, `${tab}: 100% DV reference outline`)
-  const nd = await dvTableCheck(dvp, `${tab} %DV`)
-  if (c === 'vit') assert(nd > 0 && (await dvp.locator('[data-testid=radar] .axis-labels text', { hasText: '*' }).count()) > 0, 'vitamins: missing data shown as "no data" + axis *')
-  await dvp.screenshot({ path: `${shots}/aminosplore-chart-${c}.png`, fullPage: true })
-  await dvp.getByTestId('modes').getByRole('tab', { name: 'Per 100 g' }).click()
-  await dvp.waitForTimeout(150)
-  assert((await dvp.evaluate(() => location.hash)).includes('m=per100'), `${tab}: per-100 g mode in hash`)
-  await dvTableCheck(dvp, `${tab} per 100 g`)
-  await dvp.getByTestId('modes').getByRole('tab', { name: '% Daily Value' }).click()
-}
-await dvp.reload({ waitUntil: 'networkidle' })
-await dvp.waitForFunction(() => document.querySelectorAll('[data-testid=radar] path.band').length === 3, null, { timeout: 20000 })
-assert(await dvp.getByTestId('charts').getByRole('tab', { name: 'Minerals' }).getAttribute('aria-selected') === 'true', 'reload restores chart type')
-await dvp.getByTestId('charts').getByRole('tab', { name: 'Amino acids' }).click()
-await dvp.waitForTimeout(150)
-assert(await bandCount(dvp) === 2 && !(await dvp.evaluate(() => location.hash)).includes('c='), 'back to amino acids: 2 bands (tomato has no AA data), c= dropped')
-await dvp.screenshot({ path: `${shots}/aminosplore-chart-aa.png`, fullPage: true })
-await dvp.getByTestId('charts').getByRole('tab', { name: 'Vitamins' }).click()
-await dvp.waitForTimeout(150)
-await dvp.locator('.chart-card').screenshot({ path: `${shots}/aminosplore-chart-vit-card.png` })
-
-const dk = await browser.newContext({ viewport: { width: 1360, height: 1000 }, colorScheme: 'dark' })
-const dp = await dk.newPage()
-await dp.goto(base + '#f=169961:150,171477:120', { waitUntil: 'networkidle' })
-await dp.waitForFunction(() => document.querySelectorAll('[data-testid=radar] path.band').length === 2, null, { timeout: 20000 })
-await dp.locator('.chart-card').screenshot({ path: `${shots}/aminosplore-stacked-dark.png` })
-
-const st = await page.getByTestId('dbstats').textContent()
-log('db stats:', st.replace(/\s+/g, ' ').trim())
-log('sqlite requests (first page):', ranges.length, ranges.slice(0, 6).join('; '))
+log('db stats:', (await page.getByTestId('dbstats').textContent()).replace(/\s+/g, ' ').trim())
 assert(badResp.length === 0, 'all DB responses are 206 without Content-Encoding ' + badResp.join('; '))
-assert(ranges.every((r) => !r.startsWith('GET no-range')), 'no full-file GET of the DB')
-assert(errors.length === 0, 'no page errors ' + errors.join('\n'))
+assert(ranges.length > 0 && ranges.every((r) => !r.startsWith('GET no-range')), `no full-file GET of the DB (${ranges.length} requests)`)
+assert(errors.length === 0, 'no page errors / Vue warnings ' + errors.join('\n'))
 await browser.close()
 console.log('ALL PASSED')

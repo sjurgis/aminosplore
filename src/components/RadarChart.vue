@@ -69,7 +69,7 @@ const labels = computed(() => props.axes.map((a, i) => {
   const cos = Math.cos(angle(i))
   const nd = !!props.noData[i], part = !nd && props.partial[i] > 0
   const text = a.short + (a.limit ? '†' : '') + (part ? '*' : '')
-  const title = a.label + (a.limit ? ' — Daily Value is an upper limit' : '') + (nd ? ' — no data' : part ? ` — ${props.partial[i]} food(s) have no data` : '')
+  const title = a.label + (props.layers.length ? ` — ${props.totalName}: ${nd ? 'no data' : props.format(total.value[i]) + ' ' + props.unit}` : '') + (a.limit ? ' — Daily Value is an upper limit' : '') + (nd ? ' — no data' : part ? ` — ${props.partial[i]} food(s) have no data` : '')
   return { ...a, x, y, nd, text, title, anchor: Math.abs(cos) < 0.2 ? 'middle' : cos > 0 ? 'start' : 'end' }
 }))
 const pct = (v, t) => (t > 0 ? ` (${((v / t) * 100).toFixed(0)}%)` : '')
@@ -98,15 +98,10 @@ const pct = (v, t) => (t > 0 ? ` (${((v / t) * 100).toFixed(0)}%)` : '')
         @mouseenter="hover = b.li"
         @mouseleave="hover = null"
       >
-        <title>{{ b.name }}: {{ axes.map((a, i) => `${a.short} ${b.missing?.[i] ? 'no data' : format(b.values[i]) + pct(b.values[i], total[i])}`).join(', ') }}</title>
+        <title>{{ b.name }} ({{ unit }}): {{ axes.map((a, i) => `${a.short} ${b.missing?.[i] === 'all' || b.missing?.[i] === true ? 'no data' : format(b.values[i]) + pct(b.values[i], total[i]) + (b.missing?.[i] === 'some' ? ' (partial data)' : '')}`).join(', ') }}&#10;{{ totalName }}: {{ axes.map((a, i) => `${a.short} ${format(total[i])}`).join(', ') }}</title>
       </path>
-      <polygon v-for="r in refPolys" :key="r.name" class="ref" :points="r.points" />
-      <g class="total-line" v-if="layers.length">
-        <polygon :points="totalPts.map((p) => p.join(',')).join(' ')" />
-        <circle v-for="(q, i) in totalPts" :key="i" :cx="q[0]" :cy="q[1]" r="3.2">
-          <title>{{ totalName }} — {{ axes[i].label }}: {{ format(total[i]) }} {{ unit }}</title>
-        </circle>
-      </g>
+      <polygon v-for="r in refPolys" :key="r.name" class="ref" :points="r.points" data-testid="ref-line" />
+
       <g class="clip-labels">
         <text v-for="c in clipped" :key="c.i" :x="c.pos[0]" :y="c.pos[1]" text-anchor="middle" dominant-baseline="middle">{{ format(c.v) }}↑</text>
       </g>
@@ -120,8 +115,7 @@ const pct = (v, t) => (t > 0 ? ` (${((v / t) * 100).toFixed(0)}%)` : '')
       <li v-for="b in bands" :key="b.li" @mouseenter="hover = b.li" @mouseleave="hover = null">
         <span class="swatch" :style="{ background: b.color, borderColor: b.color }"></span>{{ b.name }}
       </li>
-      <li v-if="layers.length > 1" class="tot"><span class="swatch line"></span>{{ totalName }} (outer edge)</li>
-      <li v-for="r in refs" :key="r.name" class="dashed"><span class="swatch"></span>{{ r.name }}</li>
+      <li v-for="r in refs" :key="r.name" class="dashed" data-testid="ref-legend"><span class="swatch"></span>{{ r.name }}</li>
     </ul>
   </div>
 </template>

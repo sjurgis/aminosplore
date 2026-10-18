@@ -53,40 +53,8 @@ export const MIN_AXES = [
   { key: 'mn', label: 'Manganese', short: 'Mn', unit: 'mg', dv: 2.3 },
   { key: 'se', label: 'Selenium', short: 'Se', unit: 'µg', dv: 55 },
 ]
-export const CHARTS = [
-  { key: 'aa', label: 'Amino acids' },
-  { key: 'macro', label: 'Macros', axes: MACRO_AXES },
-  { key: 'vit', label: 'Vitamins', axes: VIT_AXES },
-  { key: 'min', label: 'Minerals', axes: MIN_AXES },
-]
-export const DV_MODES = [
-  { key: 'dv', label: '% Daily Value', hint: '% of the FDA Daily Value in the quantities you entered; each band is one food, the outer edge is the total' },
-  { key: 'per100', label: 'Per 100 g', hint: '% Daily Value per 100 g of the whole meal; each band is that food\'s share, the outer edge is the mixture value' },
-]
 export const FOOD_COLS = [...new Set([...MACROS.map((m) => m.key), ...FAT_DETAIL.map((m) => m.key), ...AA_KEYS,
   ...MACRO_AXES.map((a) => a.key), ...VIT_AXES.map((a) => a.key), ...MIN_AXES.map((a) => a.key)])]
-
-/**
- * Stacked %DV layers. items: [{ food (values per 100 g, null = no data), grams }].
- *   dv:     amount_i / DV * 100                       (sum = % DV of the whole meal)
- *   per100: amount_i * 100 / meal mass / DV * 100     (sum = % DV per 100 g of the whole meal)
- * Missing values (null) contribute 0 but are flagged: missing[li][i] = true.
- * Returns { layers, missing, total, amount (absolute total in axis unit), nMissing[i], allMissing[i] }.
- */
-export function stackedDV(axes, items, mode) {
-  const mass = items.reduce((s, r) => s + r.grams, 0)
-  const missing = items.map((r) => axes.map((a) => r.food[a.key] == null))
-  const absLayers = items.map((r) => axes.map((a) => ((r.food[a.key] ?? 0) * r.grams) / 100))
-  const layers = absLayers.map((l) => l.map((v, i) => {
-    const amt = mode === 'per100' ? (mass > 0 ? (v * 100) / mass : 0) : v
-    return (amt / axes[i].dv) * 100
-  }))
-  const total = axes.map((_, i) => layers.reduce((s, l) => s + l[i], 0))
-  const amount = axes.map((_, i) => absLayers.reduce((s, l) => s + l[i], 0) * (mode === 'per100' ? (mass > 0 ? 100 / mass : 0) : 1))
-  const nMissing = axes.map((_, i) => missing.filter((m) => m[i]).length)
-  const allMissing = nMissing.map((n) => items.length > 0 && n === items.length)
-  return { layers, missing, total, amount, nMissing, allMissing }
-}
 
 // The nine essential amino acids, individually (USDA nutrient numbers 501–512).
 export const EAA = [
@@ -117,13 +85,6 @@ export const WHO_AXES = [
   { key: 'val', label: 'Valine', short: 'Val', parts: ['val'], mgPerKg: 26, mgPerGProtein: 39 },
 ]
 
-export const MODES = [
-  { key: 'amount', label: 'Amount', hint: 'Grams of each amino acid in the quantities you entered; each band is one food, the outer edge is the total' },
-  { key: 'per100', label: 'Per 100 g', hint: 'Grams of amino acid per 100 g of the whole meal; each band is that food\'s share, the outer edge is the mixture value' },
-  { key: 'protein', label: 'Per g protein', hint: 'mg of amino acid per g of protein of the whole meal; each band is that food\'s share, against the WHO/FAO/UNU 2007 adult scoring pattern (dashed)' },
-  { key: 'who', label: '% daily need', hint: '% of the WHO/FAO/UNU 2007 adult daily requirement for your body weight; each band is one food, the outer edge is the total' },
-]
-
 export const PALETTE = ['#10b981', '#6366f1', '#f59e0b', '#ec4899', '#06b6d4', '#ef4444', '#84cc16', '#a855f7', '#f97316', '#14b8a6']
 
 /** Sum nutrients (absolute amounts) over items [{food, grams}] -> totals in g (kcal). */
@@ -142,57 +103,6 @@ export function sumItems(items) {
   return { totals: t, missing, grams }
 }
 
-/**
- * Chart values for one "series" of absolute amounts.
- * abs: { key: grams } of nutrients actually eaten, grams: total food mass.
- * Returns { axes, values, reference? } where values align with axes.
- */
-export function series(mode, abs, grams, bodyKg) {
-  if (mode === 'amount' || mode === 'per100') {
-    const f = mode === 'per100' ? (grams > 0 ? 100 / grams : 0) : 1
-    return EAA.map((a) => (abs[a.key] || 0) * f)
-  }
-  return WHO_AXES.map((a) => {
-    const mg = a.parts.reduce((s, p) => s + (abs[p] || 0), 0) * 1000
-    if (mode === 'protein') return abs.protein > 0 ? mg / abs.protein : 0
-    return (mg / (a.mgPerKg * bodyKg)) * 100 // who
-  })
-}
-
-/** Raw axis amounts (grams of each axis amino acid) for absolute nutrient amounts. */
-function axisGrams(mode, abs) {
-  if (mode === 'amount' || mode === 'per100') return EAA.map((a) => abs[a.key] || 0)
-  return WHO_AXES.map((a) => a.parts.reduce((s, p) => s + (abs[p] || 0), 0))
-}
-
-/**
- * Stacked radar layers. absList: absolute amounts eaten per food (g; only foods with AA data).
- * Each layer is that food's contribution to the meal value, so layers sum exactly to the meal:
- *   amount:  g_i                         (sum = total grams of AA)
- *   per100:  g_i / meal mass * 100       (sum = g AA per 100 g of the whole meal)
- *   protein: mg_i / meal protein (g)     (sum = mg AA per g protein of the whole meal)
- *   who:     mg_i / (req mg/kg * kg)*100 (sum = % of daily requirement)
- * Returns { layers: number[][], total: number[] }.
- */
-export function stackedContributions(mode, absList, bodyKg) {
-  const mass = absList.reduce((s, a) => s + a.__grams, 0)
-  const protein = absList.reduce((s, a) => s + (a.protein || 0), 0)
-  const layers = absList.map((abs) => {
-    const g = axisGrams(mode, abs)
-    if (mode === 'amount') return g
-    if (mode === 'per100') return g.map((v) => (mass > 0 ? (v * 100) / mass : 0))
-    if (mode === 'protein') return g.map((v) => (protein > 0 ? (v * 1000) / protein : 0))
-    return g.map((v, i) => ((v * 1000) / (WHO_AXES[i].mgPerKg * bodyKg)) * 100)
-  })
-  const n = axesFor(mode).length
-  const total = Array.from({ length: n }, (_, i) => layers.reduce((s, l) => s + l[i], 0))
-  return { layers, total }
-}
-
-export function axesFor(mode) {
-  return mode === 'amount' || mode === 'per100' ? EAA : WHO_AXES
-}
-
 /** Amino acid score (AAS) vs WHO adult pattern: limiting amino acid ratio. */
 export function aminoScore(abs) {
   if (!(abs.protein > 0)) return null
@@ -209,4 +119,58 @@ export function fmt(v, digits = 1) {
   if (v == null || Number.isNaN(v)) return '—'
   if (Math.abs(v) >= 1000) return Math.round(v).toLocaleString()
   return v.toFixed(digits)
+}
+
+// ---------------------------------------------------------------------------
+// Group-based stacking (a group = one band: a single food, or a whole meal).
+// groups: [{ items: [{ food, grams }] }], food values per 100 g (null = no data).
+// basis: 'amount' (the quantities eaten) | 'per100' (per 100 g of everything shown).
+// Layers always sum exactly to the total, so the outer edge of the stack is the total.
+// ---------------------------------------------------------------------------
+const sumGrams = (groups) => groups.reduce((s, g) => s + g.items.reduce((t, it) => t + it.grams, 0), 0)
+
+/** Amino acids on WHO axes (Met+Cys, Phe+Tyr). unit: 'g' | 'who' (% of WHO 2007 adult need for kg) | 'protein' (mg/g protein of everything shown). */
+export function stackAA(groups, { basis = 'amount', unit = 'g', kg = 70 } = {}) {
+  const mass = sumGrams(groups)
+  const protein = groups.reduce((s, g) => s + g.items.reduce((t, it) => t + ((it.food.protein ?? 0) * it.grams) / 100, 0), 0)
+  const f = unit !== 'protein' && basis === 'per100' ? (mass > 0 ? 100 / mass : 0) : 1
+  const grams = groups.map((g) => WHO_AXES.map((a) => g.items.reduce((s, it) => s + (a.parts.reduce((t, p) => t + (it.food[p] ?? 0), 0) * it.grams) / 100, 0)))
+  const layers = grams.map((l) => l.map((v, i) => {
+    if (unit === 'protein') return protein > 0 ? (v * 1000) / protein : 0
+    if (unit === 'who') return ((v * f * 1000) / (WHO_AXES[i].mgPerKg * kg)) * 100
+    return v * f
+  }))
+  const total = WHO_AXES.map((_, i) => layers.reduce((s, l) => s + l[i], 0))
+  return { layers, total, mass, protein }
+}
+
+/** WHO reference outline for the amino acid chart, or null where no reference applies. */
+export function aaReference({ basis = 'amount', unit = 'g', kg = 70 } = {}) {
+  if (unit === 'protein') return { name: 'WHO adult pattern (mg/g protein)', values: WHO_AXES.map((a) => a.mgPerGProtein) }
+  if (basis !== 'amount') return null
+  if (unit === 'who') return { name: '100% WHO daily need', values: WHO_AXES.map(() => 100) }
+  return { name: `WHO daily need (${kg} kg)`, values: WHO_AXES.map((a) => (a.mgPerKg * kg) / 1000) }
+}
+
+/** % Daily Value. missing[gi][i]: '' (all items have data) | 'some' | 'all'. nMissing[i] counts foods without data. */
+export function stackDV(axes, groups, { basis = 'amount' } = {}) {
+  const mass = sumGrams(groups)
+  const f = basis === 'per100' ? (mass > 0 ? 100 / mass : 0) : 1
+  const amounts = groups.map((g) => axes.map((a) => g.items.reduce((s, it) => s + ((it.food[a.key] ?? 0) * it.grams) / 100, 0) * f))
+  const layers = amounts.map((l) => l.map((v, i) => (v / axes[i].dv) * 100))
+  const missing = groups.map((g) => axes.map((a) => {
+    const n = g.items.filter((it) => it.food[a.key] == null).length
+    return n === 0 ? '' : n === g.items.length ? 'all' : 'some'
+  }))
+  const nFoods = groups.reduce((s, g) => s + g.items.length, 0)
+  const nMissing = axes.map((a) => groups.reduce((s, g) => s + g.items.filter((it) => it.food[a.key] == null).length, 0))
+  return {
+    layers,
+    missing,
+    total: axes.map((_, i) => layers.reduce((s, l) => s + l[i], 0)),
+    amount: axes.map((_, i) => amounts.reduce((s, l) => s + l[i], 0)),
+    nMissing,
+    allMissing: nMissing.map((n) => nFoods > 0 && n === nFoods),
+    mass,
+  }
 }

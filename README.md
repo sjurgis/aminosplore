@@ -5,16 +5,18 @@ Explore the **essential amino acid profile** and macros of foods and recipes, on
 Live: https://sjurgis.github.io/aminosplore/
 
 - Search ~8,300 USDA foods (5,073 with a full essential amino acid profile)
-- Add several foods with gram quantities (or USDA household portions)
-- Stacked radar: each food is a coloured band on top of the previous ones (input order, first food innermost); the outer edge is the meal total
-- Chart modes: amount in your portions · per 100 g · mg per g protein vs the WHO adult scoring pattern · % of the WHO adult daily requirement for your body weight
-- Amino acid score (limiting amino acid) per food and for the combination
-- Chart selector (`c=` in the URL): **Amino acids · Macros · Vitamins · Minerals**, all as the same stacked per-food radar
-  - Macros / vitamins / minerals are normalised to **% of the FDA Daily Value** (quantities you entered) or
-    **% DV per 100 g of the whole meal** (`m=per100`); the radial scale is capped at 300 % with the true value labelled
-  - Missing USDA values are shown as “no data” (never as 0); totals with gaps are marked `*` (lower bound)
-- Macros per food and total: energy, protein, fat (sat / mono / poly), carbs, fiber, sugars, water
-- Recipes: name a list of ingredients; everything lives in the URL so links are shareable
+- **Meals**: build several meals (Breakfast, Lunch, Dinner, custom names) with gram quantities or USDA portions;
+  add / rename / remove meals, move foods between them, choose which meal search adds to
+- **All four radar charts on one page** — essential amino acids, macros, vitamins, minerals (2×2 grid, one column on mobile)
+  - **Day total** view: each band is a meal; **single meal** view: each band is a food. Bands are stacked, so the
+    outer edge is the total (totals are in tooltips and the Values tables)
+  - Basis: your portions, or per 100 g of the food shown
+  - Amino acids: grams, % of WHO/FAO/UNU 2007 adult need for your body weight, or mg per g protein (vs WHO adult pattern)
+  - Macros / vitamins / minerals: % of the FDA Daily Value; scale capped at 300 % with the true value labelled
+  - **Dotted daily reference** (toggle): WHO need / pattern for amino acids, 100 % FDA DV for the others
+  - Missing USDA values are “no data” (never 0); totals with gaps are marked `*` (lower bound)
+- Amino acid score (limiting amino acid) per band and combined; macros table per meal/food with day/meal total
+- Everything lives in the URL; links for the whole day or a single meal
 
 ## How it works (no backend)
 
@@ -32,12 +34,18 @@ a query touches using HTTP `Range` requests — a search or loading a shared lin
 ### URL format
 
 ```
-#f=<fdcId>:<grams>,<fdcId>:<grams>&r=<recipe name>&c=<aa|macro|vit|min>&m=<mode>&w=<body kg>
-
-# modes: amino acids amount|per100|protein|who; other charts dv|per100
+#d=<Meal>~<fdcId>:<grams>,<fdcId>:<grams>;<Meal 2>~...   meals (names percent-encoded, space = +)
+ &v=<day|0..n-1>     view: day total (default) or one meal by index
+ &m=per100           basis (default: your portions)
+ &a=who|protein      amino acid unit (default grams)
+ &w=<kg>             body weight (default 70)
+ &ref=0              hide the dotted daily reference (default shown)
 ```
 
-e.g. `#f=172421:200,168878:150&r=Dal+%26+rice&m=protein`. IDs are USDA FoodData Central `fdc_id`s.
+e.g. `#d=Breakfast~173905:240,173944:118;Lunch~172421:200,168878:150&v=1`. IDs are USDA FoodData Central `fdc_id`s.
+States longer than 1,500 characters are stored as `#z=<lz-string>` (`compressToEncodedURIComponent`).
+Old links keep working: `#f=<id>:<g>,...&r=<name>&m=amount|per100|protein|who|dv&c=<chart>` become a single meal
+(`c=` scrolls to that chart).
 
 ## Development
 
@@ -45,7 +53,7 @@ e.g. `#f=172421:200,168878:150&r=Dal+%26+rice&m=protein`. IDs are USDA FoodData 
 npm ci
 npm run dev                 # http://localhost:5173
 npm run build && npx vite preview
-node tests/unit.mjs                              # stacked-contribution sums
+node tests/unit.mjs                              # stacking sums, missing data, references, URL state
 node tests/e2e.mjs http://localhost:4173/ /tmp   # Playwright end-to-end test (npx playwright install chromium)
 ```
 
