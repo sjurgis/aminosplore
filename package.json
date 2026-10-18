@@ -1,0 +1,22 @@
+{
+  "name": "aminosplore",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "build-db": "python3 scripts/build_db.py",
+    "deploy": "bash scripts/deploy.sh"
+  },
+  "dependencies": {
+    "sql.js-httpvfs": "^0.8.12",
+    "vue": "^3.5.44"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.10",
+    "playwright": "^1.64.1",
+    "vite": "^8.3.4"
+  }
+}
