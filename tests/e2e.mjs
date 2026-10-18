@@ -43,13 +43,34 @@ await grams.nth(1).fill('150')
 await page.waitForTimeout(300)
 let hash = await page.evaluate(() => location.hash)
 assert(/^#f=\d+:200,\d+:150$/.test(hash), `URL hash updated: ${hash}`)
-const polys = await page.locator('[data-testid=radar] .series polygon').count()
-assert(polys === 3, `radar has 3 polygons (2 foods + total): ${polys}`)
+const bands = await page.locator('[data-testid=radar] path.band').count()
+assert(bands === 2, `stacked radar has 2 bands: ${bands}`)
+assert(await page.locator('[data-testid=radar] .total-line polygon').count() === 1, 'outer total outline drawn')
 const axes = await page.locator('[data-testid=radar] .axis-labels text').allTextContents()
 assert(axes.length === 9 && axes.some((t) => t.includes('Trp')), `9 axes incl. tryptophan: ${axes.join(',')}`)
 const macroTotal = await page.locator('[data-testid=macros] tfoot td').allTextContents()
 assert(macroTotal.length === 9, `macros total row: ${macroTotal.join(' | ')}`)
 await page.screenshot({ path: `${shots}/aminosplore-2foods.png`, fullPage: true })
+
+// stacked sums: in every mode each food column <= total and columns add up to the total
+async function tableCheck(p, label) {
+  const rows = await p.locator('[data-testid=aa-table] tbody tr').evaluateAll((trs) => trs.map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent.trim())))
+  const nFoods = await p.locator('[data-testid=radar] path.band').count()
+  for (const r of rows) {
+    const foods = r.slice(1, 1 + nFoods).map(Number), total = Number(r[1 + nFoods])
+    const sum = foods.reduce((a, b) => a + b, 0)
+    const half = (t) => 0.5 * 10 ** -((t.split('.')[1] || '').length) // display rounding of one cell
+    const tol = r.slice(1, 2 + nFoods).reduce((a, t) => a + half(t), 0) + 1e-9
+    if (!(foods.every((v, i) => v <= total + half(r[1 + i]) + half(r[1 + nFoods])) && Math.abs(sum - total) <= tol)) throw new Error(`${label}: row ${r.join(' | ')} does not stack`)
+  }
+  log('ok:', label, 'stacked columns add up,', rows[2].join(' | '))
+}
+for (const m of ['Amount', 'Per 100 g', 'Per g protein', '% daily need']) {
+  await page.getByTestId('modes').getByRole('tab', { name: m }).click()
+  await page.waitForTimeout(150)
+  await tableCheck(page, m)
+}
+await page.getByTestId('modes').getByRole('tab', { name: 'Amount' }).click()
 
 // mode switch
 await page.getByTestId('modes').getByRole('tab', { name: '% daily need' }).click()
@@ -98,6 +119,24 @@ await mp.waitForFunction(() => document.querySelectorAll('[data-testid=items] .i
 await mp.screenshot({ path: `${shots}/aminosplore-mobile-dark.png`, fullPage: true })
 const overflow = await mp.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)
 assert(!overflow, 'no horizontal overflow on mobile')
+
+// user-reported case: green beans + chicken; total must be >= chicken alone in absolute modes
+const gc = await ctx.newPage()
+await gc.goto(base + '#f=169961:150,171477:120', { waitUntil: 'networkidle' })
+await gc.waitForFunction(() => document.querySelectorAll('[data-testid=radar] path.band').length === 2, null, { timeout: 20000 })
+for (const m of ['Amount', 'Per 100 g', 'Per g protein', '% daily need']) {
+  await gc.getByTestId('modes').getByRole('tab', { name: m }).click()
+  await gc.waitForTimeout(150)
+  await tableCheck(gc, 'beans+chicken ' + m)
+  if (m === 'Amount') await gc.screenshot({ path: `${shots}/aminosplore-stacked-amount.png`, fullPage: true })
+}
+await gc.getByTestId('modes').getByRole('tab', { name: 'Per g protein' }).click()
+await gc.locator('.chart-card').screenshot({ path: `${shots}/aminosplore-stacked-protein.png` })
+const dk = await browser.newContext({ viewport: { width: 1360, height: 1000 }, colorScheme: 'dark' })
+const dp = await dk.newPage()
+await dp.goto(base + '#f=169961:150,171477:120', { waitUntil: 'networkidle' })
+await dp.waitForFunction(() => document.querySelectorAll('[data-testid=radar] path.band').length === 2, null, { timeout: 20000 })
+await dp.locator('.chart-card').screenshot({ path: `${shots}/aminosplore-stacked-dark.png` })
 
 const st = await page.getByTestId('dbstats').textContent()
 log('db stats:', st.replace(/\s+/g, ' ').trim())

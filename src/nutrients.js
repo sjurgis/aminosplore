@@ -41,10 +41,10 @@ export const WHO_AXES = [
 ]
 
 export const MODES = [
-  { key: 'amount', label: 'Amount', hint: 'Grams of each amino acid in the quantities you entered' },
-  { key: 'per100', label: 'Per 100 g', hint: 'Grams of each amino acid per 100 g of food (ignores quantity)' },
-  { key: 'protein', label: 'Per g protein', hint: 'mg of amino acid per g of protein, against the WHO/FAO/UNU 2007 adult scoring pattern (dashed)' },
-  { key: 'who', label: '% daily need', hint: '% of the WHO/FAO/UNU 2007 adult daily requirement for your body weight' },
+  { key: 'amount', label: 'Amount', hint: 'Grams of each amino acid in the quantities you entered; each band is one food, the outer edge is the total' },
+  { key: 'per100', label: 'Per 100 g', hint: 'Grams of amino acid per 100 g of the whole meal; each band is that food\'s share, the outer edge is the mixture value' },
+  { key: 'protein', label: 'Per g protein', hint: 'mg of amino acid per g of protein of the whole meal; each band is that food\'s share, against the WHO/FAO/UNU 2007 adult scoring pattern (dashed)' },
+  { key: 'who', label: '% daily need', hint: '% of the WHO/FAO/UNU 2007 adult daily requirement for your body weight; each band is one food, the outer edge is the total' },
 ]
 
 export const PALETTE = ['#10b981', '#6366f1', '#f59e0b', '#ec4899', '#06b6d4', '#ef4444', '#84cc16', '#a855f7', '#f97316', '#14b8a6']
@@ -80,6 +80,36 @@ export function series(mode, abs, grams, bodyKg) {
     if (mode === 'protein') return abs.protein > 0 ? mg / abs.protein : 0
     return (mg / (a.mgPerKg * bodyKg)) * 100 // who
   })
+}
+
+/** Raw axis amounts (grams of each axis amino acid) for absolute nutrient amounts. */
+function axisGrams(mode, abs) {
+  if (mode === 'amount' || mode === 'per100') return EAA.map((a) => abs[a.key] || 0)
+  return WHO_AXES.map((a) => a.parts.reduce((s, p) => s + (abs[p] || 0), 0))
+}
+
+/**
+ * Stacked radar layers. absList: absolute amounts eaten per food (g; only foods with AA data).
+ * Each layer is that food's contribution to the meal value, so layers sum exactly to the meal:
+ *   amount:  g_i                         (sum = total grams of AA)
+ *   per100:  g_i / meal mass * 100       (sum = g AA per 100 g of the whole meal)
+ *   protein: mg_i / meal protein (g)     (sum = mg AA per g protein of the whole meal)
+ *   who:     mg_i / (req mg/kg * kg)*100 (sum = % of daily requirement)
+ * Returns { layers: number[][], total: number[] }.
+ */
+export function stackedContributions(mode, absList, bodyKg) {
+  const mass = absList.reduce((s, a) => s + a.__grams, 0)
+  const protein = absList.reduce((s, a) => s + (a.protein || 0), 0)
+  const layers = absList.map((abs) => {
+    const g = axisGrams(mode, abs)
+    if (mode === 'amount') return g
+    if (mode === 'per100') return g.map((v) => (mass > 0 ? (v * 100) / mass : 0))
+    if (mode === 'protein') return g.map((v) => (protein > 0 ? (v * 1000) / protein : 0))
+    return g.map((v, i) => ((v * 1000) / (WHO_AXES[i].mgPerKg * bodyKg)) * 100)
+  })
+  const n = axesFor(mode).length
+  const total = Array.from({ length: n }, (_, i) => layers.reduce((s, l) => s + l[i], 0))
+  return { layers, total }
 }
 
 export function axesFor(mode) {

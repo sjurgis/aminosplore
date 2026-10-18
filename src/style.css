@@ -126,15 +126,16 @@ tfoot td { font-weight: 700; border-bottom: none; }
 .radar .grid polygon, .radar .grid line { fill: none; stroke: var(--line); stroke-width: 1; }
 .radar .ring-labels text { font-size: 9.5px; fill: var(--muted); }
 .radar .axis-labels text { font-size: 12.5px; font-weight: 600; fill: var(--text); }
-.radar .series polygon { fill-opacity: .14; stroke-width: 2; stroke-linejoin: round; transition: opacity .15s; }
-.radar .series.total polygon { fill-opacity: .06; stroke-width: 3; stroke: var(--total); }
-.radar .series.total circle { fill: var(--total); }
-.radar .series.dashed polygon { stroke-dasharray: 5 4; stroke-width: 1.6; stroke: var(--ref); }
-.radar .series.dim { opacity: .2; }
+.radar .band { fill-opacity: .55; stroke-width: 1; stroke-opacity: .9; stroke-linejoin: round; transition: opacity .15s; }
+.radar .band.dim { opacity: .25; }
+.radar .ref { fill: none; stroke: var(--ref); stroke-width: 1.6; stroke-dasharray: 5 4; pointer-events: none; }
+.radar .total-line polygon { fill: none; stroke: var(--total); stroke-width: 2.2; stroke-linejoin: round; pointer-events: none; }
+.radar .total-line circle { fill: var(--total); }
 .legend { list-style: none; display: flex; flex-wrap: wrap; gap: .4rem .9rem; justify-content: center; padding: 0; margin: .4rem 0 0; font-size: .8rem; }
 .legend li { display: flex; align-items: center; gap: .35rem; cursor: default; }
 .legend .swatch { width: 12px; height: 12px; border-radius: 3px; border: 2px solid; }
-.legend li.dashed .swatch { border-style: dashed; }
+.legend .swatch.line { border: none; height: 3px; background: var(--total); border-radius: 2px; }
+.legend li.dashed .swatch { border: 2px dashed var(--ref); background: transparent; }
 .aa-table th { max-width: 9rem; overflow: hidden; text-overflow: ellipsis; }
 
 .scores { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: .9rem; }
@@ -150,3 +151,5 @@ tfoot td { font-weight: 700; border-bottom: none; }
 
 .foot { max-width: 1320px; margin: 0 auto; padding: 1rem clamp(1rem, 3vw, 2rem) 2rem; font-size: .8rem; color: var(--muted); line-height: 1.5; }
 .foot p { margin: .3rem 0; }
+
+.aa-table .tot { font-weight: 700; }

@@ -6,6 +6,7 @@ Live: https://sjurgis.github.io/aminosplore/
 
 - Search ~8,300 USDA foods (5,073 with a full essential amino acid profile)
 - Add several foods with gram quantities (or USDA household portions)
+- Stacked radar: each food is a coloured band on top of the previous ones (input order, first food innermost); the outer edge is the meal total
 - Chart modes: amount in your portions · per 100 g · mg per g protein vs the WHO adult scoring pattern · % of the WHO adult daily requirement for your body weight
 - Amino acid score (limiting amino acid) per food and for the combination
 - Macros per food and total: energy, protein, fat, carbs, fiber, sugars, water
@@ -38,6 +39,7 @@ e.g. `#f=172421:200,168878:150&r=Dal+%26+rice&m=protein`. IDs are USDA FoodData 
 npm ci
 npm run dev                 # http://localhost:5173
 npm run build && npx vite preview
+node tests/unit.mjs                              # stacked-contribution sums
 node tests/e2e.mjs http://localhost:4173/ /tmp   # Playwright end-to-end test (npx playwright install chromium)
 ```
 
