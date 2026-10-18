@@ -415,9 +415,9 @@ const kb = (b) => (b / 1024).toFixed(b < 10240 ? 1 : 0) + ' KB'
           <p class="muted small">
             Unit: {{ view.unit }}; food columns are each food's share of the total<template v-if="mode === 'per100'"> (meal: {{ fmt(totalAll.grams, 0) }} g)</template>.
             “no data” = USDA has no value for that food (not zero); <sup>*</sup> = total is a lower bound because some foods have no data.
-            <template v-if="hasLimit"> † = Daily Value is a maximum, not a target.</template>
-            <template v-for="a in axisNotes" :key="a.key"> {{ a.label }}: {{ a.note }}.</template>
-            Daily Values: U.S. FDA (21 CFR 101.9).
+            <template v-if="hasLimit">{{ ' ' }}† = Daily Value is a maximum, not a target.</template>
+            <template v-for="a in axisNotes" :key="a.key">{{ ' ' }}{{ a.label }}: {{ a.note }}.</template>
+            {{ ' ' }}Daily Values: U.S. FDA (21 CFR 101.9).
           </p>
         </div>
 
