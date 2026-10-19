@@ -1,7 +1,8 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import ChartCard from './components/ChartCard.vue'
-import { search as dbSearch, getFoods, meta as dbMeta, stats as dbStats, DB_HASH } from './db.js'
+import FoodSearch from './components/FoodSearch.vue'
+import { getFoods, meta as dbMeta, stats as dbStats, DB_HASH } from './db.js'
 import { parseHash, buildHash } from './urlState.js'
 import {
   MACROS, FAT_DETAIL, PALETTE, WHO_AXES, MACRO_AXES, VIT_AXES, MIN_AXES,
@@ -21,7 +22,6 @@ const basis = ref(init.basis) // 'amount' | 'per100'
 const aaUnit = ref(init.aaUnit) // 'g' | 'who' | 'protein'
 const weight = ref(init.weight)
 const showRef = ref(init.showRef)
-const target = ref(typeof init.view === 'number' ? init.view : 0) // meal that search adds to
 const legacyChart = init.chart
 
 const foods = reactive({})
@@ -48,11 +48,9 @@ function onHashChange() {
   const s = parseHash()
   meals.value = s.meals.length ? s.meals : [{ name: 'Meal 1', items: [] }]
   view.value = s.view; basis.value = s.basis; aaUnit.value = s.aaUnit; weight.value = s.weight; showRef.value = s.showRef
-  target.value = typeof s.view === 'number' ? s.view : 0
   if (s.chart) scrollToChart(s.chart)
 }
 watch(() => meals.value.length, (n) => {
-  if (target.value >= n) target.value = n - 1
   if (typeof view.value === 'number' && view.value >= n) view.value = 'day'
   if (n === 1 && typeof view.value === 'number') view.value = 'day'
 })
@@ -62,13 +60,12 @@ function addMeal() {
   const used = new Set(meals.value.map((m) => m.name))
   const name = MEAL_NAMES.find((n) => !used.has(n)) || `Meal ${meals.value.length + 1}`
   meals.value.push({ name, items: [] })
-  target.value = meals.value.length - 1
-  nextTick(() => document.querySelector(`[data-testid=meal-${target.value}] .meal-name`)?.select())
+  const mi = meals.value.length - 1
+  nextTick(() => mealSearch[mi]?.focus())
 }
 function removeMeal(mi) {
   if (meals.value.length === 1) { meals.value[0].items = []; return }
   meals.value.splice(mi, 1)
-  if (target.value > mi) target.value--
   if (typeof view.value === 'number') view.value = view.value === mi ? 'day' : view.value > mi ? view.value - 1 : view.value
 }
 function moveItem(mi, ii, to) {
@@ -79,47 +76,21 @@ function moveItem(mi, ii, to) {
   else dest.items.push(it)
 }
 function removeItem(mi, ii) { meals.value[mi].items.splice(ii, 1) }
-function clearAll() { meals.value = [{ name: 'Meal 1', items: [] }]; view.value = 'day'; target.value = 0 }
-function selectView(v) { view.value = v; if (typeof v === 'number') target.value = v }
+function clearAll() { meals.value = [{ name: 'Meal 1', items: [] }]; view.value = 'day' }
+function selectView(v) { view.value = v }
 
-// ---------- search ----------
-const query = ref('')
-const onlyAA = ref(false)
-const results = ref([])
-const searching = ref(false)
-const active = ref(0)
-const open = ref(false)
-let seq = 0, timer = null
-watch([query, onlyAA], () => {
-  clearTimeout(timer)
-  const q = query.value.trim()
-  if (q.length < 2) { results.value = []; return }
-  timer = setTimeout(async () => {
-    const my = ++seq
-    searching.value = true
-    try {
-      const r = await dbSearch(q, { onlyAA: onlyAA.value })
-      if (my === seq) { results.value = r; active.value = 0; open.value = true; dbState.value = 'ready' }
-    } catch (e) { console.error(e); if (my === seq) dbState.value = 'error' } finally { if (my === seq) searching.value = false; refreshStats() }
-  }, 160)
-})
-const searchInput = ref(null)
-function add(r) {
-  const m = meals.value[target.value] || meals.value[0]
+// ---------- search (one box per meal) ----------
+const onlyAA = ref(localStorage.getItem('aminosplore.onlyAA') === '1')
+watch(onlyAA, (v) => localStorage.setItem('aminosplore.onlyAA', v ? '1' : '0'))
+function addTo(mi, r) {
+  const m = meals.value[mi]
   const ex = m.items.find((i) => i.id === r.id)
   if (ex) ex.grams += 100
   else m.items.push({ id: r.id, grams: 100 })
-  query.value = ''; results.value = []; open.value = false
-  nextTick(() => searchInput.value?.focus())
+  dbState.value = 'ready'
 }
-function onKey(e) {
-  if (!results.value.length) return
-  if (e.key === 'ArrowDown') { active.value = (active.value + 1) % results.value.length; e.preventDefault() }
-  else if (e.key === 'ArrowUp') { active.value = (active.value - 1 + results.value.length) % results.value.length; e.preventDefault() }
-  else if (e.key === 'Enter') { add(results.value[active.value]); e.preventDefault() }
-  else if (e.key === 'Escape') open.value = false
-}
-function onBlur() { setTimeout(() => (open.value = false), 150) }
+const mealSearch = [] // FoodSearch instances by meal index (not reactive)
+const setSearchRef = (mi, el) => { mealSearch[mi] = el }
 
 // ---------- derived: groups = bands ----------
 const shortName = (n) => (n.length > 34 ? n.slice(0, 32) + '…' : n)
@@ -269,29 +240,11 @@ const kb = (b) => (b / 1024).toFixed(b < 10240 ? 1 : 0) + ' KB'
 
   <main class="layout">
     <section class="col-left">
-      <div class="card search-card">
-        <label class="search" :class="{ busy: searching }">
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" d="M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Zm5.3-2.2L21 21" /></svg>
-          <input ref="searchInput" v-model="query" type="search" placeholder="Search 8,000+ USDA foods…" autocomplete="off" aria-label="Search foods" data-testid="search" @keydown="onKey" @focus="open = true" @blur="onBlur" />
-        </label>
-        <div class="search-opts">
-          <label class="add-to">Add to
-            <select v-model.number="target" data-testid="target" aria-label="Meal to add foods to">
-              <option v-for="(m, mi) in meals" :key="mi" :value="mi">{{ m.name || `Meal ${mi + 1}` }}</option>
-            </select>
-          </label>
-          <label class="check"><input type="checkbox" v-model="onlyAA" /> Only foods with amino acid data</label>
-        </div>
-        <ul v-if="open && results.length" class="results" role="listbox" data-testid="results">
-          <li v-for="(r, i) in results" :key="r.id" role="option" :aria-selected="i === active" :class="{ active: i === active }" @mousedown.prevent="add(r)" @mouseenter="active = i">
-            <span class="r-name">{{ r.name }}</span>
-            <span class="r-meta">{{ r.category }}<span v-if="!r.hasAA" class="pill warn">no AA data</span></span>
-          </li>
-        </ul>
-        <p v-else-if="query.trim().length >= 2 && !searching && open" class="muted small">No matches.</p>
+      <div class="meals-head">
+        <h2>Meals</h2>
+        <label class="check" title="Search results: only foods with a full essential amino acid profile"><input type="checkbox" v-model="onlyAA" data-testid="aa-filter-global" /> AA data only</label>
       </div>
-
-      <div v-for="(m, mi) in meals" :key="mi" class="card meal" :class="{ target: target === mi }" :data-testid="`meal-${mi}`" @click="target = mi">
+      <div v-for="(m, mi) in meals" :key="mi" class="card meal" :data-testid="`meal-${mi}`">
         <div class="meal-head">
           <span class="meal-dot" :style="{ background: meals.length > 1 ? mealColor(mi) : 'var(--accent)' }"></span>
           <input class="meal-name" v-model="m.name" :aria-label="`Meal ${mi + 1} name`" placeholder="Meal name" data-testid="meal-name" />
@@ -321,7 +274,14 @@ const kb = (b) => (b / 1024).toFixed(b < 10240 ? 1 : 0) + ' KB'
             <button class="icon" @click.stop="removeItem(mi, ii)" :aria-label="`Remove ${foods[it.id]?.name || it.id}`">✕</button>
           </li>
         </ul>
-        <p v-else class="muted small empty-meal">{{ target === mi ? 'Search above to add foods here.' : 'No foods yet — click to add foods here.' }}</p>
+        <FoodSearch
+          :ref="(el) => setSearchRef(mi, el)"
+          v-model:only-a-a="onlyAA"
+          :placeholder="m.items.length ? `Add food to ${m.name || 'this meal'}…` : 'Search 8,000+ USDA foods…'"
+          :label="`Add food to ${m.name || 'meal ' + (mi + 1)}`"
+          :autofocus="!allIds.length && mi === 0"
+          @add="(r) => addTo(mi, r)" @searched="refreshStats" @error="dbState = 'error'"
+        />
         <p v-if="m.items.length" class="muted small meal-sum">{{ mealSummary(m) }}</p>
       </div>
 

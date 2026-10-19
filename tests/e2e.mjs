@@ -26,10 +26,11 @@ const bands = (p, id) => p.locator(`[data-testid=chart-${id}] path.band`).count(
 const waitBands = (p, id, n) => p.waitForFunction(([id, n]) => document.querySelectorAll(`[data-testid=chart-${id}] path.band`).length === n, [id, n], { timeout: 20000 })
 const CHARTS = ['aa', 'macro', 'vit', 'min']
 
-async function addFood(q, pick) {
-  await page.getByTestId('search').fill(q)
-  await page.getByTestId('results').waitFor({ timeout: 20000 })
-  const list = page.getByTestId('results')
+async function addFood(mi, q, pick) {
+  const meal = page.getByTestId('meal-' + mi)
+  await meal.getByTestId('search').fill(q)
+  await meal.getByTestId('results').waitFor({ timeout: 20000 })
+  const list = meal.getByTestId('results')
   const opt = pick ? list.getByRole('option', { name: pick }).first() : list.getByRole('option').first()
   const name = (await opt.locator('.r-name').textContent()).trim()
   await opt.dispatchEvent('mousedown')
@@ -63,19 +64,50 @@ async function tablesStack(p, label) {
 // ---- build a day from scratch ----
 await page.goto(base, { waitUntil: 'networkidle' })
 for (const id of CHARTS) assert(await page.getByTestId('chart-' + id).isVisible(), `chart ${id} visible on the page`)
-await addFood('lentils cooked boiled', /Lentils, mature seeds, cooked, boiled, without salt/)
+assert((await page.getByTestId('meal-name').count()) === 1, 'empty start: one default meal')
+assert(await page.evaluate(() => document.activeElement?.dataset.testid === 'search' && !!document.activeElement.closest('[data-testid=meal-0]')), 'default meal search is focused and ready')
+await addFood(0, 'lentils cooked boiled', /Lentils, mature seeds, cooked, boiled, without salt/)
 await page.getByTestId('meal-0').getByTestId('meal-name').fill('Lunch')
 await page.getByTestId('add-meal').click()
 assert((await page.getByTestId('meal-1').getByTestId('meal-name').inputValue()) === 'Breakfast', 'Add meal creates "Breakfast"')
-assert((await page.getByTestId('target').inputValue()) === '1', 'new meal becomes the add-to target')
-await addFood('oats regular quick cooked water', /Cereals, oats, regular and quick, unenriched, cooked with water/)
-await addFood('rice white long grain cooked')
+assert(await page.evaluate(() => !!document.activeElement.closest('[data-testid=meal-1]') && document.activeElement.dataset.testid === 'search'), "new meal's search box gets focus")
+await addFood(1, 'oats regular quick cooked water', /Cereals, oats, regular and quick, unenriched, cooked with water/)
+// keyboard: ArrowDown/ArrowUp/Enter picks the highlighted result into this meal
+{
+  const s1 = page.getByTestId('meal-1').getByTestId('search')
+  await s1.fill('rice white long grain cooked')
+  await page.getByTestId('meal-1').getByTestId('results').waitFor()
+  const opts = await page.getByTestId('meal-1').getByTestId('results').getByRole('option').locator('.r-name').allTextContents()
+  await s1.press('ArrowDown'); await s1.press('ArrowDown'); await s1.press('ArrowUp')
+  assert((await page.getByTestId('meal-1').getByRole('option', { selected: true }).locator('.r-name').textContent()) === opts[1], 'arrow keys move the highlight')
+  await s1.press('ArrowUp'); await s1.press('Enter')
+  await page.waitForTimeout(200)
+  const names = await page.getByTestId('meal-1').locator('.item-name').allTextContents()
+  assert(names.at(-1) === opts[0] && /^Rice, white, long-grain, regular, enriched, cooked/.test(opts[0]), `Enter adds highlighted result to Breakfast: ${opts[0]}`)
+  assert((await s1.inputValue()) === '' && (await page.getByTestId('results-pop').count()) === 0, 'search box clears and dropdown closes after adding')
+}
 await page.getByTestId('add-meal').click()
 await page.getByTestId('meal-2').getByTestId('meal-name').fill('Dinner')
-await addFood('chicken broilers breast meat only roasted', /Chicken, broilers or fryers, breast, meat only, cooked, roasted/)
-await addFood('broccoli raw', /^Broccoli, raw/)
-await page.getByTestId('meal-0').click() // target Lunch by clicking the card
-await addFood('tomatoes grape raw', /Tomatoes, grape, raw/) // no AA data, vitamin gaps
+await addFood(2, 'chicken broilers breast meat only roasted', /Chicken, broilers or fryers, breast, meat only, cooked, roasted/)
+// only one dropdown at a time
+{
+  const s0 = page.getByTestId('meal-0').getByTestId('search'), s2 = page.getByTestId('meal-2').getByTestId('search')
+  await s0.fill('tomatoes grape')
+  await page.getByTestId('meal-0').getByTestId('results').waitFor()
+  await s2.fill('broccoli raw')
+  await page.getByTestId('meal-2').getByTestId('results').waitFor()
+  await page.waitForTimeout(250)
+  assert((await page.getByTestId('results-pop').count()) === 1 && (await page.getByTestId('meal-2').getByTestId('results-pop').count()) === 1, 'only one search dropdown open at a time')
+  // amino-acid filter inside the dropdown is the shared setting
+  await page.getByTestId('meal-2').getByTestId('aa-filter').check()
+  await page.waitForTimeout(400)
+  assert(await page.getByTestId('aa-filter-global').isChecked(), 'dropdown AA filter toggles the global setting')
+  assert(await page.getByTestId('meal-2').getByTestId('results').getByText('no AA data').count() === 0, 'filtered results all have AA data')
+  await page.getByTestId('aa-filter-global').uncheck()
+  await s2.fill(''); await s0.fill('')
+}
+await addFood(2, 'broccoli raw', /^Broccoli, raw/)
+await addFood(0, 'tomatoes grape raw', /Tomatoes, grape, raw/) // no AA data, vitamin gaps
 await page.getByTestId('meal-1').getByTestId('grams').nth(0).fill('240')
 await page.getByTestId('meal-2').getByTestId('grams').nth(0).fill('150')
 await page.waitForTimeout(300)
@@ -180,11 +212,33 @@ assert(!(await mp.evaluate(() => document.documentElement.scrollWidth > window.i
 const xs = await mp.locator('.chart-card').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().x)))
 assert(new Set(xs).size === 1, 'mobile: charts stacked in one column')
 await mp.screenshot({ path: `${shots}/aminosplore-mobile-dark.png`, fullPage: true })
+{
+  const ms = mp.getByTestId('meal-1').getByTestId('search')
+  await ms.fill('greek yogurt plain')
+  await mp.getByTestId('meal-1').getByTestId('results').waitFor({ timeout: 20000 })
+  const box = await mp.getByTestId('meal-1').getByTestId('results-pop').boundingBox()
+  assert(box.x >= 0 && box.x + box.width <= 390 + 1 && box.height > 100, `mobile: dropdown fits the screen (${Math.round(box.width)}x${Math.round(box.height)} px)`)
+  await mp.getByTestId('meal-1').getByTestId('results').getByRole('option').first().tap().catch(() => mp.getByTestId('meal-1').getByTestId('results').getByRole('option').first().dispatchEvent('mousedown'))
+  await mp.waitForTimeout(300)
+  assert((await mp.getByTestId('meal-1').locator('.item').count()) === 2, 'mobile: picking a result adds it to that meal')
+  await ms.fill('banana')
+  await mp.getByTestId('meal-1').getByTestId('results').waitFor({ timeout: 20000 })
+  await ms.blur(); await ms.focus(); await mp.waitForTimeout(900)
+  const top = await mp.getByTestId('meal-1').getByTestId('food-search').evaluate((e) => e.getBoundingClientRect().top)
+  assert(top >= 0 && top < 60, `mobile: focused search scrolls to the top of the screen (top ${Math.round(top)} px)`)
+  await mp.screenshot({ path: `${shots}/aminosplore-mobile-search.png` })
+}
 const dk = await browser.newContext({ viewport: { width: 1440, height: 1000 }, colorScheme: 'dark' })
 const dp = watch(await dk.newPage())
 await dp.goto(dayLink, { waitUntil: 'networkidle' })
 await waitBands(dp, 'macro', 3)
 await dp.locator('.charts').screenshot({ path: `${shots}/aminosplore-charts-dark.png` })
+await page.goto(dayLink, { waitUntil: 'networkidle' })
+await page.reload({ waitUntil: 'networkidle' })
+await waitBands(page, 'macro', 3)
+await page.getByTestId('meal-2').getByTestId('search').fill('salmon atlantic')
+await page.getByTestId('meal-2').getByTestId('results').waitFor()
+await page.screenshot({ path: `${shots}/aminosplore-day-search.png`, fullPage: true })
 
 log('db stats:', (await page.getByTestId('dbstats').textContent()).replace(/\s+/g, ' ').trim())
 assert(badResp.length === 0, 'all DB responses are 206 without Content-Encoding ' + badResp.join('; '))

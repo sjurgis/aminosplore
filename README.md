@@ -6,7 +6,8 @@ Live: https://sjurgis.github.io/aminosplore/
 
 - Search ~8,300 USDA foods (5,073 with a full essential amino acid profile)
 - **Meals**: build several meals (Breakfast, Lunch, Dinner, custom names) with gram quantities or USDA portions;
-  add / rename / remove meals, move foods between them, choose which meal search adds to
+  add / rename / remove meals, move foods between them; each meal has its own "Add food" search (typeahead, keyboard
+  navigation, one dropdown open at a time, shared "AA data only" filter)
 - **All four radar charts on one page** — essential amino acids, macros, vitamins, minerals (2×2 grid, one column on mobile)
   - **Day total** view: each band is a meal; **single meal** view: each band is a food. Bands are stacked, so the
     outer edge is the total (totals are in tooltips and the Values tables)
